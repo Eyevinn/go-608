@@ -13,3 +13,9 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 - Repository scaffolding: module layout, build (`Makefile`), CI (go, coverage,
   golangci-lint, govulncheck), pre-commit, and `internal` version stamping.
+- `cta608` wire boundary: the public `Token` sum type (`Chars`, `PAC`,
+  `MidRow`, `TabOffset`, `BackgroundAttr`, `SetMode`, `Command`) plus the
+  `Screen`/`Row`/`Run`/`Pen`/`Color`/`Mode` value types, and `Serialize`/`Parse`
+  owning odd parity, control-code doubling, two-per-pair packing, null-pair
+  frame alignment, and extended-char backspace-and-replace. Adds `DemuxField`/
+  `MuxField` and raw `cc_data` round-trip test vectors.
