@@ -1,0 +1,29 @@
+# Build output
+out/
+*.test
+
+# Compiled command binaries (repo root from `go build ./cmd/...`, or inside a
+# cmd dir; `make build` writes to out/ which is ignored above)
+/go608-extract
+/go608-inject
+/go608-clock
+/go608-info
+cmd/go608-extract/go608-extract
+cmd/go608-inject/go608-inject
+cmd/go608-clock/go608-clock
+cmd/go608-info/go608-info
+
+# Coverage
+/coverage.*
+
+# Dependencies
+vendor/
+
+# Python virtual environments (pre-commit)
+venv/
+.venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
