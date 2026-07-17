@@ -1,0 +1,18 @@
+# Contributor pre-commit hooks. Install once with `pre-commit install`
+# (typically inside a venv). CI enforces the same checks independently.
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: testdata
+      - id: end-of-file-fixer
+        exclude: testdata
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: golangci-lint
+      - id: go-unit-tests
