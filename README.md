@@ -49,6 +49,48 @@ cta608 (pure, leaf) ─┬─ scc
 cmd/ (go608-extract|inject|clock|info) wire the above; internal/ holds version + cmd glue.
 ```
 
+## The `cta608` wire boundary
+
+The core spine is a **wire-faithful token stream**. `Serialize` turns tokens
+into odd-parity `cc_data` byte pairs and `Parse` turns them back, so a `[]Token`
+round-trips bytes exactly.
+
+The token sum type (closed under the `Token` interface):
+
+| Token            | Meaning                                                       |
+|------------------|---------------------------------------------------------------|
+| `Chars`          | a run of characters (standard, special, and extended glyphs)  |
+| `PAC`            | Preamble Address Code: row + base pen, or row + indent        |
+| `MidRow`         | mid-row style change (color/underline/italics)                |
+| `TabOffset`      | shift the cursor 1–3 columns                                  |
+| `BackgroundAttr` | background color / transparent bg / black-foreground          |
+| `SetMode`        | pop-on (RCL), roll-up (RU2/3/4), or paint-on (RDC)            |
+| `Command`        | misc control: EOC, EDM, ENM, CR, BS, DER, TR, RTD, FON, …     |
+
+`Serialize`/`Parse` own **all** byte concerns so the token model stays logical:
+odd parity, control-code **doubling** (on for field 1, off for field 2 by
+default, overridable), two-characters-per-pair packing, null-pair **frame
+alignment** of two-byte control codes, and extended-character
+**backspace-and-replace**. `ParseOptions` chooses validate-vs-strip parity;
+`SerializeOptions` selects the field, channel, and doubling policy.
+
+```go
+tokens := []cta608.Token{
+    cta608.SetMode{Mode: cta608.PopOn},
+    cta608.PAC{Row: 15, Indent: cta608.NoIndent, Pen: cta608.Pen{Color: cta608.White}},
+    cta608.Chars{Text: "HELLO"},
+    cta608.Command{Op: cta608.EOC},
+}
+data := cta608.Serialize(tokens, cta608.SerializeOptions{}) // field 1, doubling on
+back, _ := cta608.Parse(data, cta608.ParseOptions{})        // back == tokens
+```
+
+`DemuxField`/`MuxField` split and join the two in-field data channels by the
+control byte's high nibble. `Screen`/`Row`/`Run`/`Pen` are the sparse, derived
+display value types (`Pen` is a comparable value); the stateful `Decoder`,
+`Encoder`, and `CaptionBlock` that interpret and diff a `Screen` land in later
+tickets. A runnable round-trip lives in [`examples/`](examples/).
+
 ## Command-line tools
 
 | Tool            | Purpose                                                        |

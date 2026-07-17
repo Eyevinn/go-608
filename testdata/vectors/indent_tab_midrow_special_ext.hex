@@ -1,0 +1,23 @@
+# Field 1, control-code doubling OFF. Exercises an indent PAC, a tab offset,
+# a mid-row color, a special char and an extended char (backspace-and-replace).
+# Options: SerializeOptions{Doubling: DoublingOff}.
+#
+# byte pair   masked      meaning
+# 94 d3       14 53       PAC  row 14, indent 4, underline (indent forces white)
+# 97 23       17 23       Tab Offset 3
+# 91 26       11 26       Mid-row cyan
+# c1 80       41 00       char 'A' (padded)
+# 91 37       11 37       special char 0x87 -> music note (append)
+# c1 80       41 00       char 'A' (extended-char fallback, padded)
+# 92 b0       12 30       extended char 0xA0 -> A-grave (backspace + replace)
+#
+# Decodes to: PAC(row=14 indent=4 white underline), Tab(3), MidRow(cyan),
+#             Chars("A<note>A-grave")
+
+94 d3
+97 23
+91 26
+c1 80
+91 37
+c1 80
+92 b0
