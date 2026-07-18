@@ -18,10 +18,22 @@
 //
 // Screen, Row, Run, Pen and Color are the sparse, derived display value types
 // (styled character runs, not a 15x32 grid). Pen is a comparable value (== is
-// meaningful) because a background is a sentinel Color, never a pointer. This
-// package defines those types; the stateful Decoder and Encoder that interpret
-// tokens into a Screen and diff a Screen back into tokens, and the CaptionBlock
-// authoring helper, arrive in later tickets.
+// meaningful) because a background is a sentinel Color, never a pointer.
+//
+// Encoder is the single per-channel diff engine: it holds the currently
+// displayed Screen and, for a target Screen, emits the []Token that transforms
+// current into target. SetScreen diffs a caller-built Screen; Apply first
+// compiles a CaptionBlock. All mode-specific token generation lives here —
+// pop-on builds into non-displayed memory and flips with EOC, roll-up appends to
+// the bottom row and scrolls with CR, paint-on writes changed rows directly —
+// and the diff bottoms out at the character-run within a row, so appending to a
+// roll-up line emits only the new characters. CaptionBlock is friendly authoring
+// on top of Screen: Lines placed by an Anchor with per-line Align, compiled by
+// Screen() to a target Screen whose Runs carry absolute columns. The Encoder
+// lowers those columns to PAC indent + Tab Offset, compensating one column for
+// the mid-row cell of a colored line (SPEC §7). Backgrounds are emitted
+// best-effort as a BackgroundAttr at a run's start. The matching stateful
+// Decoder (tokens into a Screen) arrives in a later ticket.
 //
 // The package is a dependency-free leaf: the character (Tables 49, 50, 5–10),
 // PAC (Table 53), mid-row (Table 51) and parity tables are unexported, and
