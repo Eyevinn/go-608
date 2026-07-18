@@ -22,3 +22,10 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 - `carriage` package: `cc_data` / T.35 / SEI / NAL carriage for AVC & HEVC —
   `BuildCCData`, `SEIMessage`, `NALU`, `FrameSEINALU`, `FieldPairs`, and the
   `Codec` enum, wrapping mp4ff. Ships a fragmented-mp4 `testdata/` fixture.
+- `schedule` package: the shared timing layer mapping wall-time-tagged token
+  transitions onto per-frame `{Field1, Field2, CCCount}` triples —
+  `NewScheduler`, `Push`, `Frame`, the `TimedTokens` input, and the
+  `CCCountPolicy` (full per-rate `round(600/fps)` with DTVCC padding by default
+  vs. minimal). Owns the one-pair-per-field-per-frame cadence, the 608 rate cap
+  (one 608 pair per frame above 30 fps), and frame alignment. Carriage-free
+  (imports only `cta608`).

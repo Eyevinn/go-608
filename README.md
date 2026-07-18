@@ -133,6 +133,44 @@ field1, field2, err := carriage.FieldPairs(sampleNALUs, carriage.CodecAVC)
 core `Decoder`. See `examples/` for a runnable round-trip and `testdata/` for a
 fragmented-mp4 fixture.
 
+## Scheduling (timed tokens → frames)
+
+The `schedule` package is the shared timing layer between the logical token
+stream and the per-frame carriage payload. It is format-agnostic and
+carriage-free — it imports only `cta608` — so both the wall-clock `generate`r and
+the subtitle-compile path drive the same scheduler.
+
+A `Scheduler` holds a FIFO byte-pair queue per NTSC field. `Push` serializes a
+wall-time-tagged batch of token transitions with `cta608.Serialize` and enqueues
+the resulting 2-byte pairs; `Frame(frameWallMS)` drains **at most one pair per
+field per frame** and reports the frame's `cc_count`, returning the primitive
+`{Field1, Field2, CCCount}` triple `carriage` consumes.
+
+```go
+s := schedule.NewScheduler(30) // 30 fps → cc_count 20
+s.Push(schedule.TimedTokens{TimeMS: 0, Tokens: tokens})
+
+f := s.Frame(frameWallMS)      // ≤1 pair/field, padded to CCCount
+nalu := carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, carriage.CodecAVC)
+```
+
+- **`cc_count` per frame rate** (CTA-708-E §4.3.6, `round(600/fps)`): 23.976/24→25,
+  25→24, 29.97/30→20, 50→12, 59.94/60→10. `CCCountFull` (the default) emits that
+  full count and lets `carriage` pad the surplus with DTVCC padding;
+  `CCCountMinimal` emits just the two 608 field constructs.
+- **608 rate cap:** at ≤30 fps a frame carries one field-1 **and** one field-2
+  pair; above 30 fps only **one** 608 pair per frame (field 1 first).
+- **Frame alignment:** `Serialize` emits whole 2-byte pairs and `Frame` drains
+  whole pairs, so a two-byte control code never straddles a frame. An idle field
+  yields a 0-byte pair (distinct from the `0x80 0x80` 608 null pair and from
+  DTVCC padding).
+
+> `Push` takes `schedule.TimedTokens` (a wall-clock `TimeMS` plus a `Field`
+> selector), not `cue.TimedTokens` — depending on `cue` would break the layering
+> rule (`schedule` imports only `cta608`). See the package godoc.
+
+A runnable `schedule` → `carriage` → decode round-trip lives in [`examples/`](examples/).
+
 ## Command-line tools
 
 | Tool            | Purpose                                                        |
