@@ -91,6 +91,48 @@ display value types (`Pen` is a comparable value); the stateful `Decoder`,
 `Encoder`, and `CaptionBlock` that interpret and diff a `Screen` land in later
 tickets. A runnable round-trip lives in [`examples/`](examples/).
 
+## Carriage (`cc_data` / SEI)
+
+The `carriage` package is the only mp4ff importer and the seam between 608 byte
+pairs and the elementary stream. It is pure and timing-free — the caller supplies
+`ccCount` (from `schedule`); carriage never imports the `cta608` core.
+
+**Encode** — build one frame's SEI NAL unit from the per-field byte pairs:
+
+```go
+// field1/field2 are each 0 or 2 bytes; ccCount comes from the frame rate (SPEC §5.3).
+nalu := carriage.FrameSEINALU(field1, field2, ccCount, carriage.CodecAVC)
+// nalu is a BARE NAL unit — the consumer prepends the 4-byte length and splices
+// it before the first VCL NALU (into a per-emission copy, before CENC).
+```
+
+`FrameSEINALU` is `BuildCCData` (assemble the `cc_data()` per CTA-708-E §4.3: 608
+constructs first, then DTVCC padding to `ccCount`) → `SEIMessage` (wrap as a
+`user_data_registered_itu_t_t35` / GA94 SEI message) → `NALU` (serialize via mp4ff
+and prepend the codec NAL header — AVC `0x06` or HEVC prefix-SEI 39). The three
+"nothing here" encodings — an empty field pair, DTVCC padding, and the `0x80 0x80`
+608 null pair — are kept distinct.
+
+`SEIMessage` returns an mp4ff `sei.SEIMessage` and takes **no codec** — the payload
+is codec-identical for AVC and HEVC. Use `NALU` to place the 608 message in one NAL
+unit **together with other SEI messages** (e.g. `pic_timing`); the codec is only
+needed there, for the NAL header:
+
+```go
+msg := carriage.SEIMessage(carriage.BuildCCData(field1, field2, ccCount))
+nalu := carriage.NALU(carriage.CodecAVC, msg, otherSEIMessage) // one NAL, N messages
+```
+
+**Decode** — recover the field byte-pair streams from a sample's NAL units:
+
+```go
+field1, field2, err := carriage.FieldPairs(sampleNALUs, carriage.CodecAVC)
+```
+
+`FieldPairs` wraps mp4ff's `sei.ParseCEA608`; the recovered pairs feed the `cta608`
+core `Decoder`. See `examples/` for a runnable round-trip and `testdata/` for a
+fragmented-mp4 fixture.
+
 ## Command-line tools
 
 | Tool            | Purpose                                                        |

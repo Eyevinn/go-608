@@ -19,3 +19,6 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   owning odd parity, control-code doubling, two-per-pair packing, null-pair
   frame alignment, and extended-char backspace-and-replace. Adds `DemuxField`/
   `MuxField` and raw `cc_data` round-trip test vectors.
+- `carriage` package: `cc_data` / T.35 / SEI / NAL carriage for AVC & HEVC —
+  `BuildCCData`, `SEIMessage`, `NALU`, `FrameSEINALU`, `FieldPairs`, and the
+  `Codec` enum, wrapping mp4ff. Ships a fragmented-mp4 `testdata/` fixture.
