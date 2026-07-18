@@ -19,6 +19,12 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   owning odd parity, control-code doubling, two-per-pair packing, null-pair
   frame alignment, and extended-char backspace-and-replace. Adds `DemuxField`/
   `MuxField` and raw `cc_data` round-trip test vectors.
+- `cta608` `Encoder` (the single per-channel diff engine) and `CaptionBlock`
+  authoring: `SetScreen`/`Apply` diff the current display into a `[]Token` for
+  pop-on (RCL/ENM…EOC), roll-up (append + CR scroll, minimal deltas), and
+  paint-on (RDC, direct writes); `CaptionBlock`/`Line`/`Anchor`/`Align` compile
+  to a target `Screen`, lowering absolute columns to PAC indent + Tab Offset with
+  mid-row compensation for centered colored lines.
 - `carriage` package: `cc_data` / T.35 / SEI / NAL carriage for AVC & HEVC —
   `BuildCCData`, `SEIMessage`, `NALU`, `FrameSEINALU`, `FieldPairs`, and the
   `Codec` enum, wrapping mp4ff. Ships a fragmented-mp4 `testdata/` fixture.

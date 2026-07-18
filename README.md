@@ -87,9 +87,50 @@ back, _ := cta608.Parse(data, cta608.ParseOptions{})        // back == tokens
 
 `DemuxField`/`MuxField` split and join the two in-field data channels by the
 control byte's high nibble. `Screen`/`Row`/`Run`/`Pen` are the sparse, derived
-display value types (`Pen` is a comparable value); the stateful `Decoder`,
-`Encoder`, and `CaptionBlock` that interpret and diff a `Screen` land in later
-tickets. A runnable round-trip lives in [`examples/`](examples/).
+display value types (`Pen` is a comparable value). A runnable round-trip lives
+in [`examples/`](examples/). The stateful `Decoder` (tokens → `Screen`) lands in
+a later ticket.
+
+## Encoding: the `Encoder` and `CaptionBlock`
+
+`Encoder` is the single per-channel **diff engine** (SPEC §2). It holds the
+currently displayed `Screen` and turns a *target* `Screen` into the `[]Token`
+that transforms one into the other. All mode-specific token generation lives in
+one place:
+
+- **pop-on** — build into non-displayed memory and flip with `EOC` (`RCL`, `ENM`,
+  the rows, `EOC`); an unchanged target emits nothing, clearing emits `EDM`.
+- **roll-up** — enter with `RU2/3/4`, append to the base row (a minimal delta:
+  extending the bottom line emits only the new characters), and scroll with `CR`.
+- **paint-on** — enter with `RDC` and write changed rows directly to the display.
+
+The diff bottoms out at the **character-run within a row**, so incremental
+changes stay small. The zero value is a valid pop-on `Encoder`; `SetMode`
+switches modes.
+
+`CaptionBlock` is friendly authoring on top of `Screen`: `Lines` placed by an
+`Anchor` (top/bottom) with a per-line `Align` (left/center/right). `Screen()`
+compiles it to a target `Screen`, and the `Encoder` lowers each run's **absolute
+column** to a PAC indent + Tab Offset — compensating one column for the mid-row
+cell of a centered **colored** line (SPEC §7), so `PAC(indent, white)` → `Tab` →
+`MidRow(color)` lands the text on its intended column.
+
+```go
+block := cta608.CaptionBlock{
+    Mode:   cta608.PopOn,
+    Anchor: cta608.AnchorBottom,
+    Lines: []cta608.Line{
+        {Align: cta608.AlignCenter, Runs: []cta608.Run{{Text: "HELLO", Pen: cta608.Pen{Color: cta608.White}}}},
+        {Align: cta608.AlignCenter, Runs: []cta608.Run{{Text: "WORLD", Pen: cta608.Pen{Color: cta608.Yellow}}}},
+    },
+}
+var enc cta608.Encoder            // zero value: pop-on, empty display
+tokens := enc.Apply(block)        // target Screen -> RCL/ENM … EOC token stream
+data := cta608.Serialize(tokens, cta608.SerializeOptions{}) // to cc_data byte pairs
+```
+
+Power users skip `CaptionBlock` and hand `Encoder.SetScreen` a `Screen` they
+build directly. A runnable authoring snippet lives in [`examples/`](examples/).
 
 ## Carriage (`cc_data` / SEI)
 
