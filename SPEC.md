@@ -183,8 +183,10 @@ const ( CodecAVC Codec = iota; CodecHEVC )      // explicit; never sniffed
 
 // Encode (pure, timing-free; ccCount supplied by schedule). A field pair is 0 or 2 bytes.
 func BuildCCData(field1Pair, field2Pair []byte, ccCount int) []byte
-// Wrap cc_data as T.35/GA94 -> SEI -> codec NAL. Returns a BARE NAL (no 4-byte length prefix).
-func SEINALU(ccData []byte, codec Codec) []byte
+// Wrap cc_data as a T.35/GA94 SEI message (codec-identical for AVC/HEVC; no codec here).
+func SEIMessage(ccData []byte) sei.SEIMessage
+// Serialize one or more SEI messages into a BARE codec NAL (no 4-byte length prefix).
+func NALU(codec Codec, msgs ...sei.SEIMessage) []byte
 func FrameSEINALU(field1Pair, field2Pair []byte, ccCount int, codec Codec) []byte // one-call
 // Decode (thin wrapper over mp4ff sei.ParseCEA608): sample NALUs -> field byte-pair streams.
 func FieldPairs(sampleNALUs [][]byte, codec Codec) (field1, field2 []byte, err error)
@@ -353,9 +355,9 @@ The integer and fractional members of a family yield the **same** count:
 Rationale: [#6](docs/design/cea608-carriage-seam.md); consumer study: [#4](docs/research/consumer-injection-points.md).
 
 **Encode flow:** `cta608.Serialize` → per-field byte pairs → `schedule` picks `ccCount` + per-frame
-pairs → `carriage.BuildCCData(f1,f2,ccCount)` → `carriage.SEINALU(ccData, codec)` → **bare NAL** →
-*consumer* prepends the 4-byte length and splices before the first VCL NALU (into a per-emission copy,
-before CENC).
+pairs → `carriage.BuildCCData(f1,f2,ccCount)` → `carriage.SEIMessage(ccData)` →
+`carriage.NALU(codec, msg)` → **bare NAL** → *consumer* prepends the 4-byte length and splices before
+the first VCL NALU (into a per-emission copy, before CENC).
 
 **Decode flow:** consumer/mp4ff hands sample NALUs → `carriage.FieldPairs` (reuses
 `sei.ParseCEA608`) → `cta608.Decoder.Feed(field1)` → `Screen`.
