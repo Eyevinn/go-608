@@ -25,6 +25,11 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   paint-on (RDC, direct writes); `CaptionBlock`/`Line`/`Anchor`/`Align` compile
   to a target `Screen`, lowering absolute columns to PAC indent + Tab Offset with
   mid-row compensation for centered colored lines.
+- `cta608` `Decoder` (the per-channel inverse of `Encoder`): `Feed`/`Push`
+  interpret a byte/token stream into the displayed `Screen`, with pop-on double
+  buffering (`EOC`/`EDM`), roll-up `CR` scrolling, and paint-on direct writes;
+  `Changed()` signals displayed-Screen changes for cue segmentation. XDS is
+  dropped and text mode is recognized but not rendered.
 - `carriage` package: `cc_data` / T.35 / SEI / NAL carriage for AVC & HEVC —
   `BuildCCData`, `SEIMessage`, `NALU`, `FrameSEINALU`, `FieldPairs`, and the
   `Codec` enum, wrapping mp4ff. Ships a fragmented-mp4 `testdata/` fixture.
