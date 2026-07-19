@@ -132,6 +132,30 @@ data := cta608.Serialize(tokens, cta608.SerializeOptions{}) // to cc_data byte p
 Power users skip `CaptionBlock` and hand `Encoder.SetScreen` a `Screen` they
 build directly. A runnable authoring snippet lives in [`examples/`](examples/).
 
+## Decoding: the `Decoder`
+
+`Decoder` is the inverse of `Encoder` — the stateful, per-channel interpreter that
+turns a token or byte stream into the displayed `Screen`. `Feed` parses `cc_data`
+byte pairs and interprets them; `Push` interprets an already-parsed `[]Token`;
+`Screen()` returns the displayed rows.
+
+```go
+var dec cta608.Decoder                 // zero value: pop-on, empty display
+if err := dec.Feed(data); err != nil { // data == cc_data byte pairs (one channel)
+    // handle parity error
+}
+screen := dec.Screen()                 // the sparse rendered rows
+```
+
+It models 608's double buffer with an internal displayed / non-displayed grid
+(**pop-on** writes to non-displayed and `EOC` promotes it; `EDM` clears the
+display), scrolls the **roll-up** window on `CR`, and writes **paint-on** rows
+straight to the display. `Changed()` reports whether the displayed `Screen`
+changed since the previous call — the signal WebVTT/SRT cue segmentation pivots
+on. **XDS** is dropped by `Parse` and **text mode** (`TR`/`RTD`) is recognized but
+not rendered (SPEC §1.3). A runnable decode snippet lives in
+[`examples/`](examples/).
+
 ## Carriage (`cc_data` / SEI)
 
 The `carriage` package is the only mp4ff importer and the seam between 608 byte

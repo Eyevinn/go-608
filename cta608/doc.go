@@ -32,8 +32,17 @@
 // Screen() to a target Screen whose Runs carry absolute columns. The Encoder
 // lowers those columns to PAC indent + Tab Offset, compensating one column for
 // the mid-row cell of a colored line (SPEC §7). Backgrounds are emitted
-// best-effort as a BackgroundAttr at a run's start. The matching stateful
-// Decoder (tokens into a Screen) arrives in a later ticket.
+// best-effort as a BackgroundAttr at a run's start.
+//
+// Decoder is the inverse: the stateful, per-channel interpreter that turns a
+// token or byte stream into the displayed Screen. Feed parses cc_data bytes and
+// interprets them; Push interprets a token stream; Screen returns the displayed
+// rows; Changed reports whether the displayed Screen changed since the previous
+// call — the signal timed-text cue segmentation pivots on. It models 608's double
+// buffer with an internal displayed and non-displayed grid (pop-on writes to
+// non-displayed and EOC promotes it), scrolls the roll-up window on CR, and
+// writes paint-on rows straight to the display. XDS is dropped by Parse and text
+// mode (TR/RTD) is recognized but not rendered (SPEC §1.3).
 //
 // The package is a dependency-free leaf: the character (Tables 49, 50, 5–10),
 // PAC (Table 53), mid-row (Table 51) and parity tables are unexported, and
