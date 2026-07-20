@@ -236,6 +236,31 @@ nalu := carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, carriage.CodecAVC)
 
 A runnable `schedule` → `carriage` → decode round-trip lives in [`examples/`](examples/).
 
+## Wall-clock generation (first milestone)
+
+`generate.Generator` produces a wall-clock caption, driven **one call per video
+frame** with that frame's wall-clock time. The pull-by-wall-time model makes it
+robust to gaps, seeks, and variable frame rate, and makes drop-frame a non-issue.
+
+```go
+g := generate.NewGenerator(30.0, generate.DefaultConfig()) // row14 UTC (white), row15 media (yellow)
+for each video frame at wall-clock ms `w` {
+    f := g.NextFrame(w)                                     // schedule.Frame{Field1, Field2, CCCount}
+    nalu := carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, carriage.CodecAVC)
+    // consumer prepends the 4-byte length and splices `nalu` before the first VCL NALU
+}
+```
+
+It builds each upcoming second's caption through the core (`CaptionBlock` →
+`Encoder` → tokens) and drives a `schedule.Scheduler`. The caption is **pop-on**:
+built into non-displayed memory during a second and flipped on with a single
+`EOC` on that second's **last frame**, so the clock is frame-accurate and
+zero-lag (the flip pair is scheduled eligible at the flip time). Cadence is one
+field-1 pair per frame (CC1 only by default); `Config`/`LineSpec` set the rows,
+colors, and content kinds. An **overrun guard** (`Overran()`) flags a line set
+that can't finish building within the one-second budget at the given frame rate.
+A runnable N-second snippet lives in [`examples/`](examples/).
+
 ## Command-line tools
 
 | Tool            | Purpose                                                        |
