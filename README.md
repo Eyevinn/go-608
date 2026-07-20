@@ -261,6 +261,46 @@ colors, and content kinds. An **overrun guard** (`Overran()`) flags a line set
 that can't finish building within the one-second budget at the given frame rate.
 A runnable N-second snippet lives in [`examples/`](examples/).
 
+## Timed-text cues (the `cue` package)
+
+The `cue` package is the shared timed-text intermediate and the **one place** the
+608↔cue mapping is written. WebVTT and SRT (and future formats like TTML) are
+thin serializers over it. A `TimedCue{Start, End, Content}` reuses the core
+`cta608.Screen` as its `Content`, so every format pivots on positioned, styled
+rows. The mapping is **lossy and Screen-mediated** — a sibling of the byte-exact
+SCC/SEI containers — because a format's richer grid and palette are quantized to
+608's 15×32 grid and 8 colors at the serializer edge.
+
+**608 → text — `Segment`.** A timeline of displayed-`Screen` states
+(`TimedScreen`, sampled whenever `Decoder.Changed` fires) is cut into cues by one
+unified rule for every caption mode: each displayed-`Screen` change closes the
+current cue and opens a new one; an empty screen is a **gap** (no cue). Pop-on
+gives one cue per caption, roll-up **one cue per scroll step** (the visible lines
+repeat as the window scrolls), paint-on a cue per in-place change. A caption
+still shown when the stream ends takes a configurable end — `SegmentOptions.StreamEnd`
+when set, else `Start + DefaultDur`.
+
+**text → 608 — `Compile`.** Every cue compiles to a **pop-on** caption.
+Overlapping cues are **merged by position** at each boundary: the target `Screen`
+is the union of all active cues' `Screen`s, placed by row, with a same-row
+conflict resolved by cue order (the **later** cue wins that row). That target
+drives the core `Encoder`, whose diff engine re-flips the caption whenever the
+active set changes. `Compile` stops at wall-time-tagged token transitions
+(`TimedTokens`); mapping them onto frames is `schedule`'s job.
+
+```go
+// 608 -> text
+cues := cue.Segment(screens, cue.SegmentOptions{DefaultDur: 2 * time.Second})
+
+// text -> 608
+for _, tt := range cue.Compile(cues) { /* tt.Time, tt.Tokens -> schedule */ }
+```
+
+The `Reader`/`Writer` interface over `[]TimedCue` is the **published plugin
+seam**: `webvtt` and `srt` implement it in-tree, and TTML or third-party formats
+plug in with zero change to the mapping. Runnable snippets for both directions
+live in [`examples/`](examples/).
+
 ## Command-line tools
 
 | Tool            | Purpose                                                        |
