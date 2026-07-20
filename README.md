@@ -272,6 +272,35 @@ A runnable N-second snippet lives in [`examples/`](examples/).
 
 Each tool supports `--version` (stamped from git via `-ldflags` at build time).
 
+### `go608-clock`
+
+The first-milestone demo. It runs the whole encode spine — `generate.NextFrame`
+→ `carriage.FrameSEINALU` → splice the bare SEI NAL before the first VCL NAL of
+each frame — and writes a fragmented mp4 whose frames carry the wall-clock
+caption.
+
+```sh
+# Self-contained synthetic AVC fMP4 (placeholder video, real 608 SEI):
+go608-clock -o clock.mp4 -fps 30 -seconds 5
+
+# Splice the caption into every frame of real video (AVC or HEVC, auto-detected),
+# preserving the input's sample timing:
+go608-clock -i input.mp4 -o captioned.mp4 -fps 25
+
+# Custom caption lines (repeatable "row:color:kind"; kind is "utc" or "media"):
+go608-clock -o clock.mp4 -line 14:white:utc -line 15:yellow:media
+```
+
+Flags: `-o` (output, required), `-i` (input fMP4; omit for synthetic frames),
+`-fps` (default 30; also drives caption cadence and the wall-clock advance),
+`-seconds` (synthetic duration), `-start` (RFC3339 wall-clock start; default now
+UTC), `-line` (repeatable line config; default row 14 UTC white, row 15 media
+yellow), and `-version`. Without `-i` the output is a structurally valid fMP4
+with placeholder video payloads — ideal for round-tripping the 608; pass `-i` to
+caption decodable video. If a line set can't build within one second at the
+chosen frame rate, the tool reports an overrun. The shared mp4 read/write and
+NAL-splice glue lives in `internal/mp4io` (reused by the other mp4 tools).
+
 ## Building
 
 Requires **Go 1.25+**.
