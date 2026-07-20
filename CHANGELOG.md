@@ -40,3 +40,10 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   vs. minimal). Owns the one-pair-per-field-per-frame cadence, the 608 rate cap
   (one 608 pair per frame above 30 fps), and frame alignment. Carriage-free
   (imports only `cta608`).
+- `generate` package: the wall-clock caption `Generator` (first milestone) —
+  `NewGenerator`/`NextFrame(frameWallMS)` with `Config`/`LineSpec` (default:
+  centered row 14 UTC RFC3339 white, row 15 media time yellow). Pop-on captions
+  built ahead into non-displayed memory and flipped with a single `EOC` on the
+  second's last frame (frame-accurate, zero-lag), driving `CaptionBlock`/`Encoder`
+  and a `schedule.Scheduler`; an `Overran()` guard flags content that can't build
+  within the one-second budget.
