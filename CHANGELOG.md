@@ -47,3 +47,10 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   second's last frame (frame-accurate, zero-lag), driving `CaptionBlock`/`Encoder`
   and a `schedule.Scheduler`; an `Overran()` guard flags content that can't build
   within the one-second budget.
+- `cmd/go608-clock`: the first-milestone wall-clock demo — runs `generate` →
+  `carriage` → NAL-splice end to end to emit a fragmented mp4 whose frames carry
+  the caption. Synthetic single-track AVC output by default, or `-i` splices the
+  caption into every frame of an existing single-video-track fMP4 (AVC/HEVC),
+  preserving timing; `-fps`, `-line`, `-start`, and overrun reporting. Adds the
+  shared `internal/mp4io` glue (video-track lookup, sample NAL split/prefix, and
+  SEI-before-VCL splice) reused by the other mp4 commands.
