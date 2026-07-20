@@ -40,6 +40,13 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   vs. minimal). Owns the one-pair-per-field-per-frame cadence, the 608 rate cap
   (one 608 pair per frame above 30 fps), and frame alignment. Carriage-free
   (imports only `cta608`).
+- `cue` package: the shared `TimedCue` timed-text intermediate (its `Content`
+  reuses `cta608.Screen`) plus the one 608↔cue mapping — `Segment` (unified
+  displayed-Screen-change segmentation, gaps, and a configurable dangling end via
+  `SegmentOptions`) and `Compile` (pop-on, overlapping cues merged by position
+  with the later cue winning a row conflict, driving the core diff engine to
+  `TimedTokens`). Publishes the `Reader`/`Writer` plugin seam over `[]TimedCue`
+  for WebVTT/SRT/TTML.
 - `generate` package: the wall-clock caption `Generator` (first milestone) —
   `NewGenerator`/`NextFrame(frameWallMS)` with `Config`/`LineSpec` (default:
   centered row 14 UTC RFC3339 white, row 15 media time yellow). Pop-on captions
