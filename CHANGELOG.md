@@ -73,6 +73,12 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   color>`, `<i>`/`<u>` both ways; `<b>` and background dropped) and, since SRT has
   no positioning, cues render bottom-centered and read back bottom-anchored with no
   `{\anX}` hacks. Imports only `cue`/`cta608`; ships `testdata/srt/` fixtures.
+- `cmd/go608-info`: debug dumper for the decode stack — for a fragmented mp4
+  (`-i`) or a raw `cc_data` byte-pair stream (`-hex`/`-cc-file`) it prints the
+  per-unit field byte pairs, the parsed token stream, and the rendered `Screen`
+  at each displayed change, selecting field 1 (default) or 2. Deterministic,
+  line-oriented output for greppable debugging; reuses `internal/mp4io` +
+  `carriage.FieldPairs` → `cta608.Parse` / `cta608.Decoder`.
 - `scc` package: byte-exact Scenarist SCC read/write with true SMPTE drop-frame
   timecodes — `SCCFile`/`Entry`, `Read` (fps/drop-frame inference, `WithFPS`
   override, 29.97 fallback, `;`/`:` accepted) and a dumb verbatim `Write`,
