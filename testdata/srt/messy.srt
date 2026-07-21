@@ -1,0 +1,7 @@
+1
+00:00:01,000 --> 00:00:03,000 X1:100 X2:400 Y1:20 Y2:40
+This is <b>bold</b> and <font color="#123456">near black</font>
+
+2
+00:00:03,000 --> 00:00:05,000
+Unknown <ruby>markup</ruby> is stripped

@@ -301,6 +301,35 @@ seam**: `webvtt` and `srt` implement it in-tree, and TTML or third-party formats
 plug in with zero change to the mapping. Runnable snippets for both directions
 live in [`examples/`](examples/).
 
+## SRT (SubRip text)
+
+The `srt` package is a thin, two-way serializer over the `cue` model — the simpler
+sibling of `webvtt`. SRT is a header-less list of numbered blocks (an index line, a
+`HH:MM:SS,mmm --> HH:MM:SS,mmm` timing line, and one or more text lines, blank-line
+separated) with light inline styling and **no** standard positioning. All 608↔cue
+logic lives in `cue`, so `srt` only maps SRT text ⇄ `[]cue.TimedCue`; it imports
+only `cue`/`cta608` and the standard library.
+
+```go
+cues, _ := srt.Read(r)   // parse .srt -> cues (implements cue.Reader)
+srt.Write(w, cues)       // cues -> .srt   (implements cue.Writer)
+```
+
+- **Styling**, quantized to 608's 8 colors (design note W5). Out: foreground color →
+  `<font color="#rrggbb">`, italic → `<i>`, underline → `<u>`; **background is
+  dropped** (SRT has none) and **bold is never emitted** (it has no 608 source). In:
+  a `<font>` color (hex or a CSS keyword) → the **nearest of the 8** 608 colors,
+  `<i>`/`<u>` honored, **`<b>` dropped**, and unknown tags stripped.
+- **Positioning:** SRT has none, so 608→SRT renders **bottom-centered** (row/column
+  placement dropped) and SRT→608 anchors text to the **bottom-center** of the grid.
+  No `{\anX}` or coordinate extensions are invented — SRT stays at its portable
+  common denominator (design note W6).
+- **Round-trip** is **semantic, not byte-exact**: colors snap to the palette and
+  placement collapses to bottom-center, but a read → write → read cycle is stable.
+
+A runnable `.srt` ↔ cues snippet lives in [`examples/`](examples/), and sample files
+in [`testdata/srt/`](testdata/srt/).
+
 ## SCC (Scenarist SCC read/write)
 
 The `scc` package is a **byte-pair container** — a sibling of the SEI carriage. It
