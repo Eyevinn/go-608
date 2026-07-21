@@ -109,7 +109,7 @@ func (g *Generator) buildSecond(sec, nowMS int64) {
 	toks := g.enc.Apply(block)
 	build, eoc := splitEOC(toks)
 
-	if g.buildPairs(build) > g.buildBudget {
+	if serializedPairs(build) > g.buildBudget {
 		g.overran = true
 	}
 
@@ -136,15 +136,6 @@ func (g *Generator) block(wallSec, mediaMS int64) cta608.CaptionBlock {
 		})
 	}
 	return cta608.CaptionBlock{Lines: lines, Mode: cta608.PopOn}
-}
-
-// buildPairs counts the field-1 byte pairs the build tokens serialize to (doubling
-// off), for the overrun check.
-func (g *Generator) buildPairs(toks []cta608.Token) int {
-	data := cta608.Serialize(toks, cta608.SerializeOptions{
-		Field: 1, Channel: 1, Doubling: cta608.DoublingOff,
-	})
-	return len(data) / 2
 }
 
 // splitEOC separates the terminating EOC command (the pop-on flip) from the build
