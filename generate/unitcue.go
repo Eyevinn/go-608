@@ -31,7 +31,8 @@ import (
 // UnitCue is the resolved content of one cue within a unit: the caption lines to
 // display for its slice. The caller formats the text (timestamp, segment number,
 // …); go-608 owns the pop-on build, the EOC flip, cc_count and (via carriage) the
-// SEI carriage. An empty Lines slice yields no caption change for that cue.
+// SEI carriage. An empty Lines slice clears the caption for that cue's slice (an
+// EDM); if nothing is currently displayed it is a no-op.
 type UnitCue struct {
 	Lines []cta608.Line
 }
@@ -103,10 +104,12 @@ func BuildUnitCues(
 		}
 		buildToks, eocToks := splitEOC(toks)
 		pairs := serializedPairs(buildToks)
+		eocPairs := serializedPairs(eocToks)
 		// Build + EOC are both eligible at the slice's first frame and drain one
 		// pair/frame, so the flip lands at start+pairs. Require it to leave at
-		// least one frame of display before the next slice.
-		if start+pairs+len(eocToks) >= end {
+		// least one frame of display before the next slice. (Count the EOC in byte
+		// pairs, not tokens, so the check stays correct if doubling is ever on.)
+		if start+pairs+eocPairs >= end {
 			return nil, fmt.Errorf("cue %d build (%d pairs) does not fit its %d-frame slice at %g fps; "+
 				"shorten lines, lower the update rate, or raise fps", k, pairs, end-start, fps)
 		}
