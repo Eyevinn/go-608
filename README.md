@@ -330,6 +330,38 @@ srt.Write(w, cues)       // cues -> .srt   (implements cue.Writer)
 A runnable `.srt` ↔ cues snippet lives in [`examples/`](examples/), and sample files
 in [`testdata/srt/`](testdata/srt/).
 
+## WebVTT (`webvtt`)
+
+The `webvtt` package is a **thin serializer over `cue`** — the richer sibling of
+`srt`. It owns only WebVTT syntax and its styling/positioning quantization; every
+608↔cue decision lives in `cue`, so `webvtt` imports only `cue`/`cta608` and the
+standard library. Because it maps a rich format onto 608's coarse grid and 8-color
+palette, `Read → Write` is a **semantic, quantized round-trip, not byte-exact**
+(the lossy sibling of the SCC/SEI containers).
+
+```go
+cues, _ := webvtt.Read(r)  // WEBVTT text -> []cue.TimedCue (implements cue.Reader)
+webvtt.Write(w, cues)      // []cue.TimedCue -> WEBVTT text (implements cue.Writer)
+```
+
+- **Structure:** the `WEBVTT` magic header, optional `STYLE`/`NOTE` blocks, and
+  cue blocks with `HH:MM:SS.mmm --> HH:MM:SS.mmm` timing (the `.`-millisecond form),
+  optional `line:`/`position:`/`align:` settings, and styled payload text. One cue
+  block maps to one `TimedCue` whose `Content` is a `Screen`: each payload line is a
+  `Row`, each maximal same-style span a `Run`.
+- **Styling** (design note W5). *Out:* a non-white foreground becomes a `<c.name>`
+  class plus a `STYLE` rule (`::cue(.red) { color: #ff0000; }`), italic/underline
+  become `<i>`/`<u>`, and a background is best-effort via a `bg_name` class and a
+  `::cue` background rule. *In:* any class/STYLE/`#hex`/`rgb()` color quantizes to
+  the **nearest of the 8** 608 colors, `<i>`/`<u>` are honored, **bold (`<b>`) is
+  dropped**, and voice/lang/unknown tags are stripped.
+- **Positioning** (design note W6). `line:` ⇄ `Row.Index` (1–15) and
+  `position:`/`align:` ⇄ the leftmost `Run.Column`/indent, quantized to the grid so
+  the round-trip is **approximate**. A position-less cue anchors **bottom-center**.
+
+Sample fixtures live in [`testdata/webvtt/`](testdata/webvtt/) and runnable
+`.vtt` ↔ cue snippets in [`examples/`](examples/).
+
 ## SCC (Scenarist SCC read/write)
 
 The `scc` package is a **byte-pair container** — a sibling of the SEI carriage. It
