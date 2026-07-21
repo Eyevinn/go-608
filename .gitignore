@@ -23,7 +23,8 @@ vendor/
 venv/
 .venv/
 
-# IDE / OS
+# IDE / OS / agent tooling
+.claude/
 .vscode/
 .idea/
 .DS_Store
