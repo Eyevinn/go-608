@@ -61,3 +61,9 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   preserving timing; `-fps`, `-line`, `-start`, and overrun reporting. Adds the
   shared `internal/mp4io` glue (video-track lookup, sample NAL split/prefix, and
   SEI-before-VCL splice) reused by the other mp4 commands.
+- `scc` package: byte-exact Scenarist SCC read/write with true SMPTE drop-frame
+  timecodes — `SCCFile`/`Entry`, `Read` (fps/drop-frame inference, `WithFPS`
+  override, 29.97 fallback, `;`/`:` accepted) and a dumb verbatim `Write`,
+  `FrameToTimecode`/`TimecodeToFrame` (drop 0,1 each minute except every 10th for
+  29.97/59.94; non-drop for 25/integer rates), plus `TimedPairs` flatten and the
+  `GroupPairs` helper. Imports only `cta608`.
