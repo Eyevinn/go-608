@@ -467,6 +467,37 @@ Flags: `-i` (input fragmented mp4), `-hex` (inline hex byte pairs), `-cc-file`
 drives the token parse and the Decoder, default 1); and `-version`. For an mp4
 both fields' bytes are always listed; the selected field is parsed and decoded.
 
+### `go608-extract` and `go608-inject`
+
+The two integration capstones — the decode and encode ends of the whole stack.
+`go608-extract` pulls 608 out of a fragmented mp4 and writes WebVTT, SRT, or SCC;
+`go608-inject` reads WebVTT/SRT/SCC and splices 608 back into an mp4. Both share
+**one conversion core** (`internal/convert`): **format-only conversion** (SCC ⇄
+WebVTT ⇄ SRT, no mp4) is a mode of each, not a fifth binary.
+
+```sh
+# Extract to each format (SCC is byte-exact; WebVTT/SRT are faithful, quantized):
+go608-extract -i captioned.mp4 -o out.vtt
+go608-extract -i captioned.mp4 -to scc > out.scc
+go608-extract -i captioned.mp4 -dump             # go608-info-style dump
+
+# Inject subtitles into an mp4 (WebVTT/SRT are compiled; SCC rides byte-exact):
+go608-inject -i video.mp4 -sub captions.srt -o captioned.mp4 -fps 30
+go608-inject -i video.mp4 -sub captions.scc -o captioned.mp4 -fps 29.97
+
+# Format-only conversion (no mp4) — the shared mode:
+go608-extract -i captions.scc -o captions.vtt
+go608-inject  -sub captions.srt -to scc -fps 30 > captions.scc
+```
+
+The mapping mirrors the format classes: mp4 SEI and SCC are byte-pair siblings,
+so 608 ↔ SCC is **byte-exact** (raw wire pairs, no re-encode); WebVTT/SRT are
+cue-mediated, so those directions decode/`Segment` (out) or `Compile`/`schedule`
+(in) and are faithful but **quantized** to the 608 grid and palette. Extract's
+`-stream-end`/`-default-dur` set the dangling-cue policy; inject's `-fps` and
+`-cc-count` (`full`/`minimal`) size the per-frame cadence; both infer the format
+from the file extension (override with `-from`/`-to`).
+
 ## Building
 
 Requires **Go 1.25+**.

@@ -36,8 +36,8 @@ import (
 	"strings"
 
 	"github.com/Eyevinn/go-608/carriage"
-	"github.com/Eyevinn/go-608/cta608"
 	"github.com/Eyevinn/go-608/internal"
+	"github.com/Eyevinn/go-608/internal/dump"
 	"github.com/Eyevinn/go-608/internal/mp4io"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
@@ -53,14 +53,6 @@ and the Decoder; both fields are always listed for an mp4.
 
 Usage of %s:
 `
-
-// unit is one indexed group of decoded byte pairs: an mp4 sample (one video frame)
-// or a single 2-byte pair of a raw hex stream. field1/field2 are the raw 608 bytes
-// (parity preserved) for CC1/CC2 and CC3/CC4 respectively.
-type unit struct {
-	field1 []byte
-	field2 []byte
-}
 
 type options struct {
 	version bool
@@ -158,7 +150,7 @@ func dumpMP4(w io.Writer, path string, field int) error {
 		return err
 	}
 
-	var units []unit
+	var units []dump.Unit
 	for _, seg := range f.Segments {
 		for _, frag := range seg.Fragments {
 			samples, err := frag.GetFullSamples(trex)
@@ -174,13 +166,13 @@ func dumpMP4(w io.Writer, path string, field int) error {
 				if err != nil {
 					return fmt.Errorf("extracting 608 field pairs: %w", err)
 				}
-				units = append(units, unit{field1: f1, field2: f2})
+				units = append(units, dump.Unit{Field1: f1, Field2: f2})
 			}
 		}
 	}
 
 	header := fmt.Sprintf("source: %s (codec %s, %d frames, field %d)", path, track.Codec, len(units), field)
-	return dump(w, header, "frame", units, field)
+	return dump.Write(w, header, "frame", units, field)
 }
 
 // dumpHex parses a raw hex byte-pair stream (each 2 bytes is one pair of the chosen
@@ -196,140 +188,20 @@ func dumpHex(w io.Writer, source, hexData string, field int) error {
 	if len(data)%2 != 0 {
 		return fmt.Errorf("raw cc_data must be whole 2-byte 608 pairs, got %d bytes", len(data))
 	}
-	units := make([]unit, 0, len(data)/2)
+	units := make([]dump.Unit, 0, len(data)/2)
 	for i := 0; i < len(data); i += 2 {
 		pair := data[i : i+2]
-		u := unit{}
+		u := dump.Unit{}
 		if field == 2 {
-			u.field2 = pair
+			u.Field2 = pair
 		} else {
-			u.field1 = pair
+			u.Field1 = pair
 		}
 		units = append(units, u)
 	}
 
 	header := fmt.Sprintf("source: %s (%d pairs, field %d)", source, len(units), field)
-	return dump(w, header, "pair", units, field)
-}
-
-// dump writes the three fixed sections (field pairs, tokens, screens) for the units.
-// idxLabel names the per-unit index ("frame" for mp4, "pair" for raw hex).
-func dump(w io.Writer, header, idxLabel string, units []unit, field int) error {
-	fmt.Fprintln(w, header)
-
-	fmt.Fprintln(w, "\n== field pairs ==")
-	for i, u := range units {
-		line := fmt.Sprintf("[%s %d]", idxLabel, i)
-		if len(u.field1) > 0 {
-			line += " f1=" + hex.EncodeToString(u.field1)
-		}
-		if len(u.field2) > 0 {
-			line += " f2=" + hex.EncodeToString(u.field2)
-		}
-		if len(u.field1) == 0 && len(u.field2) == 0 {
-			line += " (none)"
-		}
-		fmt.Fprintln(w, line)
-	}
-
-	stream := concatField(units, field)
-	fmt.Fprintf(w, "\n== tokens (field %d) ==\n", field)
-	toks, err := cta608.Parse(stream, cta608.ParseOptions{})
-	if err != nil {
-		return fmt.Errorf("parsing field %d tokens: %w", field, err)
-	}
-	if len(toks) == 0 {
-		fmt.Fprintln(w, "(none)")
-	}
-	for i, t := range toks {
-		fmt.Fprintf(w, "[%d] %s\n", i, t.String())
-	}
-
-	fmt.Fprintf(w, "\n== screens (field %d) ==\n", field)
-	var dec cta608.Decoder
-	changes := 0
-	for i, u := range units {
-		data := selectField(u, field)
-		if len(data) == 0 {
-			continue
-		}
-		if err := dec.Feed(data); err != nil {
-			return fmt.Errorf("decoding field %d at %s %d: %w", field, idxLabel, i, err)
-		}
-		if dec.Changed() {
-			changes++
-			fmt.Fprintf(w, "[%s %d] change %d:\n", idxLabel, i, changes)
-			writeScreen(w, dec.Screen())
-		}
-	}
-	if changes == 0 {
-		fmt.Fprintln(w, "(no displayed changes)")
-	}
-	return nil
-}
-
-// writeScreen renders the sparse Screen: one line per row (positioned text), then a
-// detail line per styled run (its column, pen, and text).
-func writeScreen(w io.Writer, s cta608.Screen) {
-	if len(s.Rows) == 0 {
-		fmt.Fprintln(w, "  (empty)")
-		return
-	}
-	for _, row := range s.Rows {
-		fmt.Fprintf(w, "  row %2d: %q\n", row.Index, rowLine(row))
-		for _, r := range row.Runs {
-			fmt.Fprintf(w, "    col %2d %s: %q\n", r.Column, penStr(r.Pen), r.Text)
-		}
-	}
-}
-
-// rowLine renders a row's runs as a single positioned string: runs placed at their
-// absolute columns with gaps filled by spaces, trimmed on the right.
-func rowLine(row cta608.Row) string {
-	var b []rune
-	for _, r := range row.Runs {
-		for len(b) < r.Column {
-			b = append(b, ' ')
-		}
-		b = b[:r.Column]
-		b = append(b, []rune(r.Text)...)
-	}
-	return strings.TrimRight(string(b), " ")
-}
-
-// penStr renders a Pen compactly, omitting default/false attributes (mirrors the
-// cta608 internal pen formatter).
-func penStr(p cta608.Pen) string {
-	var b strings.Builder
-	b.WriteString(p.Color.String())
-	if p.Italic {
-		b.WriteString(" italic")
-	}
-	if p.Underline {
-		b.WriteString(" underline")
-	}
-	if p.Background != cta608.ColDefault {
-		fmt.Fprintf(&b, " bg=%s", p.Background)
-	}
-	return b.String()
-}
-
-// selectField returns the raw bytes of the chosen field (1 or 2) for a unit.
-func selectField(u unit, field int) []byte {
-	if field == 2 {
-		return u.field2
-	}
-	return u.field1
-}
-
-// concatField concatenates the chosen field's bytes across all units into one
-// channel stream for cta608.Parse.
-func concatField(units []unit, field int) []byte {
-	var out []byte
-	for _, u := range units {
-		out = append(out, selectField(u, field)...)
-	}
-	return out
+	return dump.Write(w, header, "pair", units, field)
 }
 
 // parseHexBytes decodes a whitespace/comma-separated hex byte-pair string (with

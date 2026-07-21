@@ -85,3 +85,13 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   `FrameToTimecode`/`TimecodeToFrame` (drop 0,1 each minute except every 10th for
   29.97/59.94; non-drop for 25/integer rates), plus `TimedPairs` flatten and the
   `GroupPairs` helper. Imports only `cta608`.
+- `cmd/go608-extract` and `cmd/go608-inject`: the decode/encode integration
+  capstones. Extract pulls 608 out of a fragmented mp4 (`carriage.FieldPairs` →
+  `cta608.Decoder` → `cue.Segment` → the writers); inject splices it back in
+  (`cue.Compile` → `schedule` → `carriage` → NAL splice); SCC ↔ mp4 is byte-exact
+  (raw wire pairs), WebVTT/SRT are faithful quantized cues. Both expose
+  format-only conversion (SCC ⇄ WebVTT ⇄ SRT, no mp4) through one shared core,
+  `internal/convert` (`ReadCues`/`WriteCues`/`WriteSCCPairs`/`CuesFromUnits`).
+  Adds `internal/dump` (the field-pairs/tokens/`Screen` formatter now shared with
+  `go608-info`) and extends `internal/mp4io` with a reusable `SpliceFragmented`
+  fragment rewriter (also adopted by `go608-clock`) and a `Samples` flattener.
