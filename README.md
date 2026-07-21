@@ -2,9 +2,8 @@
   <img src="images/go608-logo.png" alt="go-608 — CTA-608 captions in Go" width="480">
 </p>
 
-# go-608
-
 [![Go](https://github.com/Eyevinn/go-608/workflows/Go/badge.svg)](https://github.com/Eyevinn/go-608/actions/workflows/go.yml)
+[![Coverage Status](https://coveralls.io/repos/github/Eyevinn/go-608/badge.svg?branch=main)](https://coveralls.io/github/Eyevinn/go-608?branch=main)
 [![golangci-lint](https://github.com/Eyevinn/go-608/workflows/golangci-lint/badge.svg)](https://github.com/Eyevinn/go-608/actions/workflows/golangci-lint.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/Eyevinn/go-608.svg)](https://pkg.go.dev/github.com/Eyevinn/go-608)
 [![license](https://img.shields.io/github/license/Eyevinn/go-608.svg)](https://github.com/Eyevinn/go-608/blob/main/LICENSE)
