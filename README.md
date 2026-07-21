@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/go608-logo.png" alt="go-608 — CTA-608 captions in Go" width="480">
+</p>
+
 # go-608
 
 [![Go](https://github.com/Eyevinn/go-608/workflows/Go/badge.svg)](https://github.com/Eyevinn/go-608/actions/workflows/go.yml)
@@ -9,10 +13,8 @@ A pure-Go library for **CTA-608 / CEA-608** captions: encode + decode,
 `cc_data` + SEI carriage per ATSC A/53 (AVC & HEVC), wall-clock caption
 generation, and timed-text (SCC / WebVTT / SRT) I/O.
 
-> **Status: implementation in progress.** This scaffolding is the first slice
-> ([#12](https://github.com/Eyevinn/go-608/issues/12)); the package APIs below
-> are the agreed design and land ticket by ticket. The full design is in
-> [`SPEC.md`](SPEC.md), with per-decision rationale in [`docs/design/`](docs/design/).
+The full design lives in [`SPEC.md`](SPEC.md), with per-decision rationale in
+[`docs/design/`](docs/design/).
 
 ## Why "608" and "cta608"
 
