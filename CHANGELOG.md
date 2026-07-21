@@ -61,6 +61,12 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   preserving timing; `-fps`, `-line`, `-start`, and overrun reporting. Adds the
   shared `internal/mp4io` glue (video-track lookup, sample NAL split/prefix, and
   SEI-before-VCL splice) reused by the other mp4 commands.
+- `srt` package: a thin SRT (SubRip) serializer over the `cue` model — `Read`/
+  `Write` (and the `Reader`/`Writer` seam types) map SRT text ⇄ `[]cue.TimedCue`.
+  Inline styling is quantized to 608's 8-color palette (foreground ⇄ `<font
+  color>`, `<i>`/`<u>` both ways; `<b>` and background dropped) and, since SRT has
+  no positioning, cues render bottom-centered and read back bottom-anchored with no
+  `{\anX}` hacks. Imports only `cue`/`cta608`; ships `testdata/srt/` fixtures.
 - `scc` package: byte-exact Scenarist SCC read/write with true SMPTE drop-frame
   timecodes — `SCCFile`/`Entry`, `Read` (fps/drop-frame inference, `WithFPS`
   override, 29.97 fallback, `;`/`:` accepted) and a dumb verbatim `Write`,
