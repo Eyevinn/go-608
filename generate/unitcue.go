@@ -77,6 +77,11 @@ func BuildUnitCues(
 	if content == nil {
 		return nil, fmt.Errorf("content function must not be nil")
 	}
+	// Validate the frame rate up front and return an error rather than letting
+	// schedule.NewScheduler panic: cc_count = round(600/fps) must land in 2..31.
+	if cc := int(math.Round(600.0 / fps)); cc < 2 || cc > 31 {
+		return nil, fmt.Errorf("fps %.3f yields cc_count %d outside 2..31 (use a 23.976..60 caption rate)", fps, cc)
+	}
 	frameDurMS := 1000.0 / fps
 	unitDurMS := int64(math.Round(float64(unitFrames) * frameDurMS))
 	n := NumCues(unitDurMS, targetPeriodMS)

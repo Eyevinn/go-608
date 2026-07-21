@@ -148,6 +148,14 @@ func TestBuildUnitCuesSelfContained(t *testing.T) {
 	}
 }
 
+// TestBuildUnitCuesBadFPS checks that an out-of-range frame rate is a returned
+// error, not a scheduler panic (5 fps -> cc_count 120, far outside 2..31).
+func TestBuildUnitCuesBadFPS(t *testing.T) {
+	if _, err := BuildUnitCues(5.0, 60, 0, 1000, segCueContent(1)); err == nil {
+		t.Fatal("expected an fps-range error for 5 fps, got nil")
+	}
+}
+
 // TestBuildUnitCuesOverran checks the error when a build cannot fit its slice
 // (here: too few frames per cue for the ~18-pair build).
 func TestBuildUnitCuesOverran(t *testing.T) {
