@@ -438,6 +438,35 @@ caption decodable video. If a line set can't build within one second at the
 chosen frame rate, the tool reports an overrun. The shared mp4 read/write and
 NAL-splice glue lives in `internal/mp4io` (reused by the other mp4 tools).
 
+### `go608-info`
+
+The debug dumper — the thinnest consumer of the decode spine
+(`carriage.FieldPairs` → `cta608.Parse` / `cta608.Decoder`). For a fragmented mp4
+or a raw `cc_data` byte-pair stream it prints three line-oriented sections: the
+per-unit field byte pairs, the parsed token stream, and the rendered `Screen` at
+each displayed change. Output is deterministic (no timestamps) so it greps and
+diffs cleanly.
+
+```sh
+# Dump an mp4's 608: field pairs, tokens, and screens per displayed change:
+go608-info -i captions.mp4
+
+# Decode field 2 (CC3/CC4) instead of the default field 1 (CC1):
+go608-info -i captions.mp4 -field 2
+
+# Dump a raw cc_data byte-pair stream directly, no mp4 needed
+# (spaces, commas, and "0x" prefixes are all accepted):
+go608-info -hex "9420 94ae 9162 c849 942f"
+
+# Read the byte pairs from a file:
+go608-info -cc-file pairs.txt
+```
+
+Flags: `-i` (input fragmented mp4), `-hex` (inline hex byte pairs), `-cc-file`
+(a file of hex byte pairs) — pass exactly one; `-field` (1 or 2; the field that
+drives the token parse and the Decoder, default 1); and `-version`. For an mp4
+both fields' bytes are always listed; the selected field is parsed and decoded.
+
 ## Building
 
 Requires **Go 1.25+**.
