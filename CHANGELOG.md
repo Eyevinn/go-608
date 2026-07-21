@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Entries stay terse — see the [README](README.md) and the package documentation
 on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
-## [Unreleased]
+## [0.5.0] - 2026-07-21
 
 ### Added
 
