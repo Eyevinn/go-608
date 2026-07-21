@@ -47,6 +47,12 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   with the later cue winning a row conflict, driving the core diff engine to
   `TimedTokens`). Publishes the `Reader`/`Writer` plugin seam over `[]TimedCue`
   for WebVTT/SRT/TTML.
+- `webvtt` package: a thin WebVTT serializer over `cue` — `Read`/`Write`
+  (`cue.Reader`/`cue.Writer`) mapping WEBVTT text ⇄ `[]cue.TimedCue`, with color
+  via `<c.name>` classes + a `STYLE` block (nearest-of-8 quantization in), `<i>`/
+  `<u>` (bold dropped), best-effort `bg_` backgrounds, and `line:`/`position:`/
+  `align:` ⇄ grid Row/Column (position-less cues anchor bottom-center). Semantic,
+  quantized round-trip; imports only `cue`/`cta608`.
 - `generate` package: the wall-clock caption `Generator` (first milestone) —
   `NewGenerator`/`NextFrame(frameWallMS)` with `Config`/`LineSpec` (default:
   centered row 14 UTC RFC3339 white, row 15 media time yellow). Pop-on captions

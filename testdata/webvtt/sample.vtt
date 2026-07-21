@@ -1,0 +1,23 @@
+WEBVTT
+- go-608 sample: colors, italics/underline, and positioning
+
+STYLE
+::cue(.green) { color: #00ff00; }
+::cue(.yellow) { color: #ffff00; }
+
+NOTE
+A first, bottom-centered caption with no cue settings (position-less), which the
+reader anchors bottom-center on the 608 grid.
+
+1
+00:00:01.000 --> 00:00:03.000
+HELLO WORLD
+
+2
+00:00:04.000 --> 00:00:06.500 line:93% position:0% align:start
+<c.green>GREEN</c> and <i>italic</i>
+<c.yellow><u>UNDERLINED YELLOW</u></c>
+
+3
+00:00:07.000 --> 00:00:09.000 line:0% position:50% align:center
+TOP CENTER

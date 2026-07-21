@@ -1,0 +1,14 @@
+WEBVTT
+
+STYLE
+::cue(.speaker) { color: #00a000; }
+::cue(.warn) { color: rgb(255, 10, 0); }
+
+00:00:00.500 --> 00:00:02.000
+<c.speaker>Nearest-green speaker</c>
+
+00:00:02.000 --> 00:00:04.000
+<b>bold is dropped</b> but <i>italic</i> and <u>under</u> stay
+
+00:00:04.000 --> 00:00:06.000
+<c.warn>almost red</c> &amp; <lang en>voice-ish</lang>
