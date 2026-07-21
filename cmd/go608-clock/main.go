@@ -297,12 +297,6 @@ func spliceInput(
 	if err != nil {
 		return false, fmt.Errorf("decoding %s: %w", inPath, err)
 	}
-	if f.Init == nil {
-		return false, fmt.Errorf("%s has no init segment (need an initialized fragmented mp4)", inPath)
-	}
-	if n := len(f.Init.Moov.Traks); n != 1 {
-		return false, fmt.Errorf("%s has %d tracks; go608-clock splices single-video-track fMP4", inPath, n)
-	}
 	track, trex, err := mp4io.VideoTrack(f)
 	if err != nil {
 		return false, err
@@ -311,53 +305,18 @@ func spliceInput(
 	gen := generate.NewGenerator(fps, cfg)
 	startMS := start.UnixMilli()
 	frameDurMS := 1000.0 / fps
-	frame := 0
-
-	newSegments := make([]*mp4.MediaSegment, 0, len(f.Segments))
-	for _, seg := range f.Segments {
-		newSeg := mp4.NewMediaSegmentWithoutStyp()
-		if seg.Styp != nil {
-			newSeg = mp4.NewMediaSegmentWithStyp(seg.Styp)
-		}
-		for _, frag := range seg.Fragments {
-			samples, err := frag.GetFullSamples(trex)
-			if err != nil {
-				return false, fmt.Errorf("expanding fragment samples: %w", err)
-			}
-			seq := uint32(1)
-			if frag.Moof != nil && frag.Moof.Mfhd != nil {
-				seq = frag.Moof.Mfhd.SequenceNumber
-			}
-			newFrag, err := mp4.CreateFragment(seq, track.ID)
-			if err != nil {
-				return false, fmt.Errorf("creating fragment: %w", err)
-			}
-			for _, s := range samples {
-				wallMS := startMS + int64(math.Round(float64(frame)*frameDurMS))
-				fr := gen.NextFrame(wallMS)
-				sei := carriage.FrameSEINALU(fr.Field1, fr.Field2, fr.CCCount, track.Codec)
-				data, err := mp4io.SpliceSEIBeforeVCL(s.Data, sei, track.Codec)
-				if err != nil {
-					return false, fmt.Errorf("splicing SEI into frame %d: %w", frame, err)
-				}
-				s.Data = data
-				s.Size = uint32(len(data))
-				newFrag.AddFullSample(s)
-				frame++
-			}
-			newSeg.AddFragment(newFrag)
-		}
-		newSegments = append(newSegments, newSeg)
+	frames := 0
+	// Drive the caption by frame index at the chosen rate (start + i*frameDur), so
+	// the two lines stay in lockstep and the clock advances one second per second.
+	seiFor := func(info mp4io.SampleInfo) ([]byte, error) {
+		wallMS := startMS + int64(math.Round(float64(info.Index)*frameDurMS))
+		fr := gen.NextFrame(wallMS)
+		frames = info.Index + 1
+		return carriage.FrameSEINALU(fr.Field1, fr.Field2, fr.CCCount, track.Codec), nil
 	}
-
-	if err := f.Init.Encode(out); err != nil {
-		return false, fmt.Errorf("encoding init segment: %w", err)
+	if err := mp4io.SpliceFragmented(f, track, trex, out, seiFor); err != nil {
+		return false, err
 	}
-	for _, seg := range newSegments {
-		if err := seg.Encode(out); err != nil {
-			return false, fmt.Errorf("encoding media segment: %w", err)
-		}
-	}
-	fmt.Fprintf(status, "%s: spliced %s into %d %s frames at %g fps\n", appName, inPath, frame, track.Codec, fps)
+	fmt.Fprintf(status, "%s: spliced %s into %d %s frames at %g fps\n", appName, inPath, frames, track.Codec, fps)
 	return gen.Overran(), nil
 }
