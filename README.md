@@ -301,6 +301,42 @@ seam**: `webvtt` and `srt` implement it in-tree, and TTML or third-party formats
 plug in with zero change to the mapping. Runnable snippets for both directions
 live in [`examples/`](examples/).
 
+## SCC (Scenarist SCC read/write)
+
+The `scc` package is a **byte-pair container** — a sibling of the SEI carriage. It
+owns the SCC text-file structure and timecodes only; the `cta608` core owns all
+608 semantics, so **Read → Write is byte-exact**. It imports only `cta608` and the
+standard library.
+
+```go
+f, _ := scc.Read(r)                 // infers FPS/DropFrame; WithFPS(…) overrides
+for _, p := range f.TimedPairs() {  // pair i of an entry lands at Frame+i
+    // p.Frame, p.Pair (2 bytes) — feed the concatenated channel bytes to cta608.Parse
+}
+scc.Write(w, f)                     // dumb: one Entry -> one line, verbatim
+```
+
+- **Model:** `SCCFile{FPS, DropFrame, Entries}` with `Entry{Frame, Pairs}` — an
+  absolute frame number plus its verbatim raw byte pairs. Canonical time is an
+  absolute integer frame counted from `00:00:00:00`.
+- **True SMPTE drop-frame** (`FrameToTimecode`/`TimecodeToFrame`): for 29.97/59.94
+  the frame labels 0,1 (0..3 at 59.94) are skipped at the top of every minute
+  **except every tenth minute** — the conversion the media-tools/SVTA prior art
+  gets wrong. PAL(25) and the integer rates are always non-drop. `;` before the
+  frame field marks drop-frame, `:` non-drop; both are accepted.
+- **fps inference** (`Read`): SCC is a sparse event list, so the reader infers the
+  rate from the timecodes — a `;` separator means drop-frame, and the maximum
+  line-start frame field selects the family (≥50 → 59.94/60; 30–49 → 50; 25–29 →
+  29.97/30; ≤24 → ambiguous). `WithFPS` overrides; genuinely ambiguous files fall
+  back to **29.97** (the NTSC default).
+- **Dumb writer** (`Write`): one `Entry` → one line, verbatim — the caller decides
+  what pairs sit on each line. `GroupPairs` is an optional helper (**not** the
+  writer) that coalesces a flat scheduled stream into sparse entries, breaking at
+  idle gaps; it is the inverse of `TimedPairs`.
+
+A runnable read → tokens → write-back snippet lives in [`examples/`](examples/),
+and sample `;`/`:` files in [`testdata/scc/`](testdata/scc/).
+
 ## Command-line tools
 
 | Tool            | Purpose                                                        |

@@ -1,0 +1,12 @@
+# Normalize line endings to LF on checkout on every platform, so Git for
+# Windows' autocrlf cannot rewrite tracked files — which otherwise breaks
+# byte-exact fixture comparisons and confuses Go tooling.
+* text=auto eol=lf
+
+# The Scenarist SCC round-trip fixtures are compared byte-for-byte against the
+# serializer's LF output (scc.Write emits "\n"). Treat them as binary so their
+# line endings are never converted, regardless of platform or user git config.
+testdata/scc/*.scc -text
+
+# Binary test fixtures — never treat as text or convert.
+*.mp4 binary
