@@ -9,6 +9,23 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-22
+
+### Added
+
+- `generate.BuildUnitCues(fps, unitFrames, unitStartMS, targetPeriodMS, content)`:
+  the shared per-unit cue helper for segment-oriented consumers (one DASH segment
+  or MoQ group per unit). It emits a *self-contained* caption per unit — every
+  pop-on build and EOC flip stays inside the unit — split into
+  `N = NumCues(unitDurMS, targetPeriodMS)` ≈1 s pop-on cues, so a stateless
+  per-segment server can generate a segment's captions from the segment alone. The
+  caller formats the lines; go-608 owns the build/flip, `cc_count`, and (via
+  `carriage`) the SEI carriage. Adds the supporting `NumCues`, `UnitCue`, and
+  `CueContentFunc` public API.
+- `BuildUnitCues` returns an error (rather than panicking) when a cue's build does
+  not fit its slice, or when `fps` is outside the 23.976–60 broadcast caption range
+  (`cc_count` out of 2..31).
+
 ## [0.5.0] - 2026-07-21
 
 ### Added
