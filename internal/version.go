@@ -14,7 +14,7 @@ import (
 //	-X github.com/Eyevinn/go-608/internal.commitVersion=$(git describe --tags --always HEAD)
 //	-X github.com/Eyevinn/go-608/internal.commitDate=$(git log -1 --format=%ct)
 var (
-	commitVersion = "v0.6.0"
+	commitVersion = "v0.7.0-dev"
 	commitDate    = "" // commit date in Unix epoch seconds
 )
 
