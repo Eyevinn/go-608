@@ -148,6 +148,108 @@ func TestBuildUnitCuesSelfContained(t *testing.T) {
 	}
 }
 
+// TestBuildUnitCuesFlipAtCueStart checks that WithFlipAtCueStart puts every flip on
+// its cue's first frame, so a caption is displayed over exactly the interval its text
+// names. Two consecutive units are decoded as one stream because that is the only way
+// to observe the cross-unit build: unit A's tail carries the build that unit B flips
+// on its own first frame.
+func TestBuildUnitCuesFlipAtCueStart(t *testing.T) {
+	const fps = 30.0
+	const unitFrames = 60 // 2 s at 30 fps -> 2 cues per unit
+	unitAStart := time.Date(2026, 7, 20, 14, 23, 44, 0, time.UTC).UnixMilli()
+	unitBStart := unitAStart + 2000
+
+	a, err := BuildUnitCues(fps, unitFrames, unitAStart, 1000, segCueContent(42), WithFlipAtCueStart(segCueContent(43)))
+	if err != nil {
+		t.Fatalf("unit A: %v", err)
+	}
+	b, err := BuildUnitCues(fps, unitFrames, unitBStart, 1000, segCueContent(43), WithFlipAtCueStart(segCueContent(44)))
+	if err != nil {
+		t.Fatalf("unit B: %v", err)
+	}
+
+	flips := decodeFlips(t, append(append([]schedule.Frame{}, a...), b...))
+	for _, fl := range flips {
+		t.Logf("flip @frame %d: row14=%q row15=%q", fl.frame, fl.row14, fl.row15)
+	}
+	// Unit A's own first cue was built by the unit before A, which is not part of this
+	// stream, so the visible flips are A's second cue and both of B's — each exactly on
+	// a cue boundary (frames 30, 60, 90) rather than part-way into the slice.
+	want := []decodedFlip{
+		{30, "14:23:45.000", "SEG 42"},
+		{60, "14:23:46.000", "SEG 43"}, // built in unit A's tail, flipped by unit B
+		{90, "14:23:47.000", "SEG 43"},
+	}
+	if len(flips) != len(want) {
+		t.Fatalf("got %d flips, want %d", len(flips), len(want))
+	}
+	for i, w := range want {
+		if flips[i] != w {
+			t.Errorf("flip %d = %+v, want %+v", i, flips[i], w)
+		}
+	}
+}
+
+// TestBuildUnitCuesFlipAtCueStartNilNext checks that a nil next leaves the unit's tail
+// empty: nothing is preloaded for the following unit, whose first caption is then
+// blank until its second cue.
+func TestBuildUnitCuesFlipAtCueStartNilNext(t *testing.T) {
+	const fps = 30.0
+	const unitFrames = 60
+	unitStart := time.Date(2026, 7, 20, 14, 23, 44, 0, time.UTC).UnixMilli()
+
+	frames, err := BuildUnitCues(fps, unitFrames, unitStart, 1000, segCueContent(42), WithFlipAtCueStart(nil))
+	if err != nil {
+		t.Fatalf("BuildUnitCues: %v", err)
+	}
+	// The last cue flips at frame 30; every frame after it must be idle.
+	for i := 31; i < unitFrames; i++ {
+		if len(frames[i].Field1) != 0 {
+			t.Errorf("frame %d carries %d field-1 bytes, want none (nothing preloaded)", i, len(frames[i].Field1))
+		}
+	}
+}
+
+// TestBuildUnitCuesFlipAtCueStartClear checks that a cleared cue (empty Lines, which
+// encodes as a bare EDM with no EOC) stays on its boundary frame: the erase is itself
+// the visible change, so it must not be moved ahead of the boundary the way a build is.
+func TestBuildUnitCuesFlipAtCueStartClear(t *testing.T) {
+	const fps = 30.0
+	const unitFrames = 60
+	unitStart := time.Date(2026, 7, 20, 14, 23, 44, 0, time.UTC).UnixMilli()
+	content := func(cueIdx int, cueStartMS int64) UnitCue {
+		if cueIdx == 1 {
+			return UnitCue{} // clear the caption for the second cue
+		}
+		return segCueContent(42)(cueIdx, cueStartMS)
+	}
+
+	frames, err := BuildUnitCues(fps, unitFrames, unitStart, 1000, content, WithFlipAtCueStart(nil))
+	if err != nil {
+		t.Fatalf("BuildUnitCues: %v", err)
+	}
+	// EDM on channel 1 is 0x94 0x2c, and it belongs on frame 30 (cue 1's first frame).
+	if got := frames[30].Field1; len(got) != 2 || got[0] != 0x94 || got[1] != 0x2c {
+		t.Errorf("frame 30 field 1 = % x, want 94 2c (EDM on the cue boundary)", got)
+	}
+	for i := 31; i < unitFrames; i++ {
+		if len(frames[i].Field1) != 0 {
+			t.Errorf("frame %d carries data after the clear, want idle", i)
+		}
+	}
+}
+
+// TestBuildUnitCuesFlipAtCueStartOverran checks the error when a unit is too short to
+// carry the build the next unit needs — silently dropping it would leave that unit
+// flipping an unloaded screen, i.e. a caption that never appears.
+func TestBuildUnitCuesFlipAtCueStartOverran(t *testing.T) {
+	_, err := BuildUnitCues(30.0, 10, 0, 1000, segCueContent(1), WithFlipAtCueStart(segCueContent(2)))
+	if err == nil {
+		t.Fatal("expected an overrun error for a 10-frame unit, got nil")
+	}
+	t.Logf("overrun error (expected): %v", err)
+}
+
 // TestBuildUnitCuesBadFPS checks that an out-of-range frame rate is a returned
 // error, not a scheduler panic (5 fps -> cc_count 120, far outside 2..31).
 func TestBuildUnitCuesBadFPS(t *testing.T) {
