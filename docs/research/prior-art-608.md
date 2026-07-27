@@ -40,7 +40,8 @@ slightly older Python sibling with the *same architecture* but a few meaningful 
 width, control-code coverage) called out throughout.
 
 `Cea608` vs `Cta608`: CEA-608 was renamed CTA-608 when CTA absorbed CEA. The two names denote the same
-spec; SVTA uses `Cta608*`, media-tools/mp4ff use `Cea608`/`CEA608`.
+spec; SVTA uses `Cta608*`, media-tools uses `Cea608`. mp4ff used `CEA608` when this was written and
+renamed to `CTA608` in v0.55.0 (no aliases), which go-608 follows.
 
 ---
 
@@ -317,18 +318,23 @@ interoperability gotcha with media-tools' non-drop writer.
 
 `/Users/tobbe/proj/github/ev/mp4ff/sei/sei4.go`. mp4ff already parses SEI **type 4**
 (`user_data_registered_itu_t_t35`) and, when it is CEA-608, hands back the raw field bytes:
-- `ITUData.IsCEA608()` checks `countryCode==0xB5 && providerCode==0x31 && userIdentifier==0x47413934
-  ("GA94") && userDataTypeCode==0x03` (`sei4.go:32-37`).
-- `CEA608sei{ Field1 []byte, Field2 []byte }` (`sei4.go:88-93`).
-- `ParseCEA608(payload)` (`sei4.go:118-150`): `ccCount = payload[0] & 0x1F`, skip a reserved byte, then
+- `ITUData.IsCTA608()` checks `countryCode==0xB5 && providerCode==0x31 && userIdentifier==0x47413934
+  ("GA94") && userDataTypeCode==0x03` (`sei4.go:57` in v0.55.0).
+- `CTA608sei{ Field1 []byte, Field2 []byte }` (`sei4.go:156`).
+- `ParseCTA608(payload)` (`sei4.go:185`): `ccCount = payload[0] & 0x1F`, skip a reserved byte, then
   `ccCount` triplets of `(flags, ccData1, ccData2)`; `ccValid = flags & 0x04`, `ccType = flags & 0x03`;
-  keep pairs where `ccValid` set and `(ccData1&0x7f)+(ccData2&0x7f) != 0`; append to Field1 (`ccType==0`)
-  or Field2 (`ccType==1`). **Parity bits are preserved** in the returned bytes (`sei4.go:133-135`).
+  keep pairs where `ccValid` set and `(ccData1&0x7f)+(ccData2&0x7f) != 0` (`sei4.go:207`); append to
+  Field1 (`ccType==0`) or Field2 (`ccType==1`). **Parity bits are preserved** in the returned bytes.
 
 So the seam mp4ff gives go-608 is: **two `[]byte` streams of concatenated 2-byte cc pairs (parity intact),
 one per NTSC field, per access unit.** go-608's decoder therefore takes `(pts, []byte)` per field — exactly
 the SVTA `addData(time, byteList)` shape. go-608 does *not* need its own SEI type-4 parser for the AVC/HEVC
 mp4ff path; it needs the byte-pair -> screen decoder and the encode/`cc_data`-build direction.
+
+**Update (v0.55.0):** the encode direction is no longer entirely go-608's either. mp4ff gained
+`sei.CreateCTA608SEIMessage` and `avc`/`hevc.CreateSEINalu`, so the split settled at: go-608 builds
+`cc_data()` (`carriage.BuildCCData`) and mp4ff owns everything from there to the wire, for AVC/HEVC and
+AV1 alike. The read-side conclusion above is unchanged.
 
 ### 3.2 What SVTA adds that mp4ff already covers (so don't duplicate)
 
@@ -338,11 +344,11 @@ For completeness (dash.js needs this because it has no Go mp4ff): `findCta608Nal
 (`utils/seiHelpers.ts:1-16`), find the type-4 SEI (`isCea608Sei`, `utils/seiHelpers.ts:18-44`, same magic
 as mp4ff), and unpack `cc_data` into `fieldData[0]`/`fieldData[1]` (`extractCta608Data.ts:10-39`,
 `utils/seiHelpers.ts:135-169`). The `cc_data` unpacking is byte-identical in logic to mp4ff's
-`ParseCEA608`. **go-608 should reuse `mp4ff/sei` here and not re-implement NAL scanning.**
+`ParseCTA608`. **go-608 should reuse `mp4ff/sei` here and not re-implement NAL scanning.**
 
 ### 3.3 cc_data structure (canonical, cross-checked)
 
-From mp4ff `ParseCEA608` (`sei4.go:118-150`) and SVTA `extractCta608Data`/`seiHelpers`
+From mp4ff `ParseCTA608` (`sei4.go:185`) and SVTA `extractCta608Data`/`seiHelpers`
 (`extractCta608Data.ts:10-39`, `utils/seiHelpers.ts:150-165`):
 ```
 user_data_type_structure (after the 8-byte GA94/0x03 identifier):
@@ -578,7 +584,7 @@ Remote (GitHub, pinned commits):
 - livesim2 tree (searched, no 608) — https://github.com/Dash-Industry-Forum/livesim2/tree/1738fef49ec76472eadd80dd7b0005f0928c25d7
 
 Local files:
-- `/Users/tobbe/proj/github/ev/mp4ff/sei/sei4.go` (SEI type-4 -> CEA-608 field bytes)
+- `/Users/tobbe/proj/github/ev/mp4ff/sei/sei4.go` (SEI type-4 <-> CTA-608 field bytes; create side added in v0.55.0)
 - `/Users/tobbe/proj/github/ev/dash.js/src/streaming/text/TextSourceBuffer.js` (integration/scheduling)
 - `/Users/tobbe/proj/github/ev/dash.js/src/streaming/MediaPlayer.js` (import of `@svta/common-media-library` `Cta608Parser`)
 - `/Users/tobbe/proj/github/ev/dash.js/src/streaming/constants/Constants.js` (`ACCESSIBILITY_CEA608_SCHEME`)

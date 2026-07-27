@@ -236,12 +236,27 @@ time and wall-clock in scope:
 
 ## 3. mp4ff SEI-creation capability
 
+> **Outcome (2026-07-27): most of this section's gaps are closed.** It audits mp4ff as of ticket #4,
+> and the answer it reaches — "mp4ff cannot create a caption SEI NAL unit" — was correct then and drove
+> go-608's design. mp4ff **v0.55.0** then added the encode side
+> ([#532](https://github.com/Eyevinn/mp4ff/pull/532), [#541](https://github.com/Eyevinn/mp4ff/pull/541)),
+> and go-608 now delegates to it. Superseded claims are marked inline below.
+>
+> One part of the conclusion still holds and is worth keeping straight: **mp4ff still has no
+> `cc_data()` builder.** Its creators take a `cc_data()` structure as *input*. Building those bytes is
+> `carriage.BuildCCData`, and it remains the whole of go-608's contribution to the wire. What moved
+> upstream is the T.35/GA94 wrapping and both envelopes.
+>
+> Note also that the `sei` API renamed CEA-608 to CTA-608 in v0.55.0 with no aliases
+> (`ParseCEA608` → `ParseCTA608`, `CEA608sei` → `CTA608sei`, `ExtractCEA608sei` → `ExtractCTA608sei`,
+> `IsCEA608` → `IsCTA608`), so symbol names and `sei4.go` line references below have been updated.
+
 Repo: `mp4ff` = `/Users/tobbe/proj/github/ev/mp4ff`. Question: beyond parsing SEI type-4 CEA-608
 (prior-art §3), can mp4ff **create/serialize** an SEI NAL unit that a consumer can drop into a
-video sample? Answer: **it can serialize a generic SEI message into an SEI-NAL RBSP payload
-(with emulation prevention), but it has no CEA-608 `cc_data` builder and no helper that wraps a
-payload into a full NAL unit or packs NALUs back into a sample.** Those last steps are the caller's
-job today (and are the net-new surface for go-608 #6).
+video sample? Answer **at the time of this audit**: it can serialize a generic SEI message into an
+SEI-NAL RBSP payload (with emulation prevention), but it has no CEA-608 `cc_data` builder and no helper
+that wraps a payload into a full NAL unit or packs NALUs back into a sample. Those last steps were the
+caller's job (and were the net-new surface for go-608 #6).
 
 ### 3.1 What mp4ff CAN do (serialize SEI)
 
@@ -261,21 +276,31 @@ job today (and are the net-new surface for go-608 #6).
 
 ### 3.2 What mp4ff CANNOT do (the gaps go-608 #6 must fill)
 
-- **No CEA-608 `cc_data()` builder.** `CEA608sei` is **parse-only**: created solely by
-  `ExtractCEA608sei(sd *SEIData)` (`mp4ff/sei/sei4.go:76`) which calls `ParseCEA608` (`:118`, the
-  decode-side reader). Its `payload` field is **unexported** (`sei4.go:90`) and set only when parsing;
-  there is **no `NewCEA608sei(field1, field2)` constructor**, no `cc_data()` builder, and no T.35
-  wrapper builder (the `0xB5 / 0x0031 / GA94 / 0x03` + `cc_count` + per-construct triplets + `0xFF`
-  marker). Confirmed by grep: the only CEA608 symbols in `sei/` are `IsCEA608`, `ExtractCEA608sei`,
-  the `CEA608sei` methods, and `ParseCEA608` — all decode-side. **This is exactly the encode surface
-  #6 owns:** build the `cc_data()` bytes (per the §1/§2/§3 normative rules), prepend the T.35 header,
-  and hand the result to `WriteSEIMessages` (or set them as a `SEIData` payload).
-- **No AVC/HEVC "write SEI NALU" helper.** `avc.ParseSEINalu` (`mp4ff/avc/sei.go:17`) and
-  `hevc.ParseSEINalu` (`mp4ff/hevc/sei.go:17`) are **parse-only**. To turn the RBSP payload from
-  `WriteSEIMessages` into a real NAL unit the caller must prepend the NAL header itself:
-  AVC = 1 byte `0x06` (`NALU_SEI = 6`, `mp4ff/avc/avc.go:17`); HEVC = 2-byte header with
-  `NALU_SEI_PREFIX` (type 39; see `mp4ff/hevc/hevc.go`).
-- **No "pack `[][]byte` NALUs back into a length-prefixed sample" helper.** The inverse parse exists —
+- **No CTA-608 T.35 wrapper builder.** ~~`CTA608sei` is **parse-only**~~: it was created solely by
+  `ExtractCTA608sei(sd *SEIData)` which calls `ParseCTA608`, the decode-side reader. Its `payload` field
+  is unexported and was set only when parsing; there was **no `NewCTA608sei(field1, field2)`
+  constructor**, no `cc_data()` builder, and no T.35 wrapper builder (the
+  `0xB5 / 0x0031 / GA94 / 0x03` + `cc_count` + per-construct triplets + `0xFF` marker) — the only
+  CTA-608 symbols in `sei/` were decode-side. **This was exactly the encode surface #6 owned:** build
+  the `cc_data()` bytes (per the §1/§2/§3 normative rules), prepend the T.35 header, and hand the result
+  to `WriteSEIMessages`.
+  **Superseded in v0.55.0**, which split that surface in two: the T.35 wrapping is now
+  `sei.CreateCTA608Payload(ccData)` and the message creator is `sei.CreateCTA608SEIMessage(ccData)`
+  (`sei/sei4.go:83` and `:95`), with `sei.CTA608ITUData()` (`:47`) owning the 8 identity bytes. **The
+  `cc_data()` builder itself is still not in mp4ff** and remains `carriage.BuildCCData` — the creators
+  take `cc_data()` as input. So of this bullet's three claims, the first two are now false and the third
+  still stands.
+- **No AVC/HEVC "write SEI NALU" helper.** `avc.ParseSEINalu` (`mp4ff/avc/sei.go`) and
+  `hevc.ParseSEINalu` (`mp4ff/hevc/sei.go`) were **parse-only**, so to turn the RBSP payload from
+  `WriteSEIMessages` into a real NAL unit the caller had to prepend the NAL header itself:
+  AVC = 1 byte `0x06` (`NALU_SEI = 6`); HEVC = 2-byte header with `NALU_SEI_PREFIX` (type 39).
+  **Superseded in v0.55.0:** `avc.CreateSEINalu(msgs)` and `hevc.CreateSEINalu(msgs)`
+  (`avc/sei.go:17`, `hevc/sei.go:17`) do the wrap, and `carriage.NALU` delegates to them — the
+  header bytes no longer live in go-608.
+- **No "pack `[][]byte` NALUs back into a length-prefixed sample" helper.** Still true of mp4ff, but
+  go-608 now supplies it publicly: `carriage.PrefixNALUs`, `carriage.SampleNALUs` and
+  `carriage.SpliceSEIBeforeVCL` do the split, insert and re-pack, so a consumer no longer writes the
+  length prefixes by hand. The inverse parse exists —
   `avc.GetNalusFromSample(sample []byte) ([][]byte, error)` follows 4-byte length fields
   (`mp4ff/avc/nalus.go:9`) — but re-serialization is done inline by callers writing a big-endian
   uint32 length + NALU bytes. Concrete precedent in mp4ff's own tooling:
@@ -296,11 +321,20 @@ job today (and are the net-new surface for go-608 #6).
   SEI NAL is inserted into**, and `DecodeTime`/`PresentationTime()` are the media-time hooks for
   scheduling (#7).
 
-**Bottom line:** mp4ff gives go-608 the RBSP->EBSP SEI *serializer* (emulation prevention included)
-and the generic `SEIData` message wrapper, but **not** the CEA-608 `cc_data` builder, **not** the
-NAL-header wrap, and **not** the sample re-pack. go-608 #6 supplies the `cc_data`+T.35 payload; the
+**Bottom line at the time:** mp4ff gave go-608 the RBSP->EBSP SEI *serializer* (emulation prevention
+included) and the generic `SEIData` message wrapper, but **not** the CEA-608 `cc_data` builder, **not**
+the NAL-header wrap, and **not** the sample re-pack. go-608 #6 supplies the `cc_data`+T.35 payload; the
 NAL-header wrap and sample re-pack are trivial and can live either in #6 (produce ready-to-insert NAL
 bytes) or in the consumer (produce byte pairs / payload). This directly informs the API choice in §4.
+
+**Bottom line now:** the split landed one notch lower than this section expected. go-608 supplies
+`cc_data()` only (`carriage.BuildCCData`); mp4ff owns the T.35 wrap and both envelopes
+(`sei.CreateCTA608SEIMessage` + `avc`/`hevc.CreateSEINalu` for SEI,
+`av1.CreateCTA608MetadataOBU` for AV1); and the sample re-pack is go-608's, exported from `carriage`
+rather than left to each consumer. The reusable unit across codecs turned out to be the **SEI message
+payload** — the T.35/GA94 header + `cc_data()`, byte-identical between SEI and the AV1 metadata OBU —
+not the message or the NAL, since an SEI NAL carries an emulation-prevented EBSP that AV1 has no analog
+for.
 
 ---
 
