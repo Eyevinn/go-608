@@ -11,15 +11,12 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ### Added
 
-- `generate.WithFlipAtCueStart(next)`: an option for `BuildUnitCues` that moves each
-  cue's EOC onto the first frame of its own slice, transmitting the pop-on build over
-  the preceding frames, so a caption is displayed over exactly the interval its content
-  names. With the default placement the build drains from the slice's first frame and
-  the flip follows it, which puts a two-line caption on screen 0.6–0.75 s into the ~1 s
-  slice it names. The option trades self-contained units for that accuracy: a cue's
-  build lives in the frames before its flip, so a unit carries the build for the next
-  unit's first cue (`next`) and a receiver starting mid-stream shows no caption for one
-  cue period. `BuildUnitCues` is unchanged without the option.
+- `generate.WithFlipAtCueStart(next)`: an option for `BuildUnitCues` that puts each cue's
+  EOC on the first frame of its own slice and transmits the pop-on build over the
+  preceding frames, so a caption is displayed over exactly the interval its content names
+  instead of appearing 0.5–0.75 s into it. Trades self-contained units for that accuracy —
+  see [Per-unit cues](README.md#per-unit-cues-buildunitcues). `BuildUnitCues` is unchanged
+  without the option.
 
 ## [0.6.0] - 2026-07-22
 

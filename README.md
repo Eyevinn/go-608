@@ -262,6 +262,69 @@ colors, and content kinds. An **overrun guard** (`Overran()`) flags a line set
 that can't finish building within the one-second budget at the given frame rate.
 A runnable N-second snippet lives in [`examples/`](examples/).
 
+## Per-unit cues (`BuildUnitCues`)
+
+`generate.BuildUnitCues` is the segment-oriented counterpart to `Generator`: **one call
+per unit** — a DASH segment, a MoQ group — instead of one call per frame, which is what a
+stateless server generating segments on demand needs. It splits the unit into
+`N = NumCues(unitDurMS, targetPeriodMS)` equal cue slices, asks a `CueContentFunc` for each
+slice's lines, and returns one `schedule.Frame` per video frame.
+
+```go
+frames, err := generate.BuildUnitCues(fps, unitFrames, unitStartMS, 1000, content)
+```
+
+A pop-on cue is two transmissions — a **build** (RCL + ENM + rows) written into
+non-displayed memory, and an **EOC** that flips it on screen — and both drain at one 608
+pair per frame. Where the build sits therefore decides *when* the caption appears, and
+that is a genuine trade-off:
+
+**Default: self-contained units.** The build starts at its cue's first frame and the flip
+follows it, so every build and flip stays inside the unit and each unit is independently
+decodable. The cost is arming latency: a two-line build is ~15-19 pairs, so the caption
+reaches the screen 0.5-0.75 s into the ~1 s slice at 30 fps, and is visible only for the
+remainder. Fine when the text is unrelated to its own display time.
+
+**`WithFlipAtCueStart(next)`: flips on the cue boundary.** Each EOC moves onto the first
+frame of its own cue and the build is transmitted over the frames *before* the flip, so
+the caption is displayed over exactly the interval its content names. Use it when the text
+refers to its own display interval — a clock, a segment or group number — since with the
+default placement such a caption is always seen late.
+
+```go
+frames, err := generate.BuildUnitCues(fps, unitFrames, unitStartMS, 1000, content,
+    generate.WithFlipAtCueStart(nextContent))
+```
+
+The build for a cue then lives in the frames preceding its flip, which for a unit's first
+cue means the **previous unit**. `next` supplies the following unit's first cue so this
+unit's tail can carry its build; it is called once as `next(0, unitStartMS+unitDurMS)`, and
+`nil` leaves the tail empty. Consecutive units are still generated independently — a unit's
+first cue is always encoded from a clean encoder state, so the build one unit places in its
+tail matches the flip the next unit emits. On the wire, at 30 fps with ~1 s cues:
+
+```text
+unit A frame 45: 94 20   RCL   ─┐ build of unit B's first cue
+unit A frame 46: 94 ae   ENM    │ (one pair per frame)
+       ...                      │
+unit A frame 59: 34 b3         ─┘ ends on A's last frame
+unit B frame  0: 94 2f   EOC      the flip, on the cue boundary
+```
+
+**What this costs at a discontinuity.** Units are no longer self-contained, so a receiver
+that starts, seeks, or joins mid-stream gets that leading EOC without the build that
+belongs to it. What it then shows depends on its decoder state: a fresh decoder has empty
+non-displayed memory and shows **nothing** for one cue period, while a decoder that keeps
+608 state across the discontinuity flips whatever was last preloaded and can show **one cue
+period of stale caption** before correcting at the next boundary. A sender cannot prevent
+this — any pair emitted ahead of the EOC to sanitise the state (an `ENM`) would erase the
+very build about to be flipped. Choose the default placement if that matters more than
+display accuracy.
+
+Either way the 608 data rate is one pair per frame, so `cc_count` stays `round(600/fps)`,
+and a build that does not fit the frames available to it is a returned error rather than a
+silently dropped build (which would leave an EOC with nothing loaded).
+
 ## Timed-text cues (the `cue` package)
 
 The `cue` package is the shared timed-text intermediate and the **one place** the
