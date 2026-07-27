@@ -168,8 +168,10 @@ pairs and the elementary stream. It is pure and timing-free — the caller suppl
 ```go
 // field1/field2 are each 0 or 2 bytes; ccCount comes from the frame rate (SPEC §5.3).
 nalu := carriage.FrameSEINALU(field1, field2, ccCount, carriage.CodecAVC)
-// nalu is a BARE NAL unit — the consumer prepends the 4-byte length and splices
-// it before the first VCL NALU (into a per-emission copy, before CENC).
+// nalu is a BARE NAL unit. SpliceSEIBeforeVCL puts it into a sample — adding the
+// 4-byte length prefix — ahead of the picture data (into a per-emission copy,
+// before CENC).
+data, err := carriage.SpliceSEIBeforeVCL(sample.Data, nalu, carriage.CodecAVC)
 ```
 
 `FrameSEINALU` is `BuildCCData` (assemble the `cc_data()` per CTA-708-E §4.3: 608
@@ -189,13 +191,33 @@ msg := carriage.SEIMessage(carriage.BuildCCData(field1, field2, ccCount))
 nalu := carriage.NALU(carriage.CodecAVC, msg, otherSEIMessage) // one NAL, N messages
 ```
 
+**Samples** — the sample-level splice, identical work for every consumer, so it
+lives here rather than in each of them:
+
+```go
+// One caption SEI into one mp4 sample, ahead of the picture data.
+data, err := carriage.SpliceSEIBeforeVCL(s.Data, nalu, codec)
+if err != nil {
+    return err
+}
+s.Data, s.Size = data, uint32(len(data)) // the sample grew
+
+// The split/join either side of it, plus the coded-slice predicate.
+nalus, err := carriage.SampleNALUs(s.Data)  // 4-byte-length-prefixed → bare NALs
+sample := carriage.PrefixNALUs(nalus...)    // and back
+isPicture := carriage.IsVCL(nalus[0], codec)
+```
+
+A sample with no VCL NAL unit has no picture for the SEI to precede; the SEI is
+appended at the end, leaving the existing NAL order untouched. Nothing is dropped.
+
 **Decode** — recover the field byte-pair streams from a sample's NAL units:
 
 ```go
 field1, field2, err := carriage.FieldPairs(sampleNALUs, carriage.CodecAVC)
 ```
 
-`FieldPairs` wraps mp4ff's `sei.ParseCEA608`; the recovered pairs feed the `cta608`
+`FieldPairs` wraps mp4ff's `sei.ParseCTA608`; the recovered pairs feed the `cta608`
 core `Decoder`. See `examples/` for a runnable round-trip and `testdata/` for a
 fragmented-mp4 fixture.
 

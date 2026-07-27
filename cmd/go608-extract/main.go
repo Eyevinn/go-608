@@ -174,7 +174,7 @@ func pairsFromMP4(path string) ([]scc.TimedPair, error) {
 	}
 	var pairs []scc.TimedPair
 	for i, s := range samples {
-		nalus, err := mp4io.SampleNALUs(s.Data)
+		nalus, err := carriage.SampleNALUs(s.Data)
 		if err != nil {
 			return nil, fmt.Errorf("splitting sample NAL units: %w", err)
 		}
@@ -253,7 +253,7 @@ func cuesFromMP4(path string, opts convert.Options) ([]cue.TimedCue, error) {
 	}
 	units := make([]convert.DecodeUnit, 0, len(samples))
 	for _, s := range samples {
-		nalus, err := mp4io.SampleNALUs(s.Data)
+		nalus, err := carriage.SampleNALUs(s.Data)
 		if err != nil {
 			return nil, fmt.Errorf("splitting sample NAL units: %w", err)
 		}
@@ -309,7 +309,7 @@ func dumpMP4(w io.Writer, path string) error {
 	}
 	units := make([]dump.Unit, 0, len(samples))
 	for _, s := range samples {
-		nalus, err := mp4io.SampleNALUs(s.Data)
+		nalus, err := carriage.SampleNALUs(s.Data)
 		if err != nil {
 			return fmt.Errorf("splitting sample NAL units: %w", err)
 		}

@@ -177,7 +177,7 @@ func TestInputSplice(t *testing.T) {
 	f, _ := mp4.DecodeFile(bytes.NewReader(data))
 	_, trex, _ := mp4io.VideoTrack(f)
 	samples, _ := f.Segments[0].Fragments[0].GetFullSamples(trex)
-	nalus, _ := mp4io.SampleNALUs(samples[0].Data)
+	nalus, _ := carriage.SampleNALUs(samples[0].Data)
 	if len(nalus) < 2 {
 		t.Errorf("spliced sample has %d NAL units, want >= 2 (SEI + VCL)", len(nalus))
 	}
@@ -217,7 +217,7 @@ func decodeFlips(t *testing.T, data []byte, codec carriage.Codec) []flip {
 				t.Fatalf("GetFullSamples: %v", err)
 			}
 			for _, s := range samples {
-				nalus, err := mp4io.SampleNALUs(s.Data)
+				nalus, err := carriage.SampleNALUs(s.Data)
 				if err != nil {
 					t.Fatalf("SampleNALUs: %v", err)
 				}
@@ -287,7 +287,7 @@ func buildPlainAVC(t *testing.T, fps float64, nFrames int) []byte {
 	}
 	seg.AddFragment(frag)
 	for i := 0; i < nFrames; i++ {
-		data := mp4io.PrefixNALUs(dummyVCL(i))
+		data := carriage.PrefixNALUs(dummyVCL(i))
 		flags := mp4.NonSyncSampleFlags
 		if i == 0 {
 			flags = mp4.SyncSampleFlags

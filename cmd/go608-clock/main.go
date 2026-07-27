@@ -250,7 +250,7 @@ func writeSynthetic(fps, seconds float64, start time.Time, cfg generate.Config, 
 		wallMS := startMS + int64(math.Round(float64(i)*frameDurMS))
 		fr := gen.NextFrame(wallMS)
 		sei := carriage.FrameSEINALU(fr.Field1, fr.Field2, fr.CCCount, carriage.CodecAVC)
-		data := mp4io.PrefixNALUs(sei, dummyVCL(i))
+		data := carriage.PrefixNALUs(sei, dummyVCL(i))
 		flags := mp4.NonSyncSampleFlags
 		if i == 0 {
 			flags = mp4.SyncSampleFlags

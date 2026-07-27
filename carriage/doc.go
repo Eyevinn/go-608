@@ -17,8 +17,21 @@
 // serializes one or more SEI messages into a bare SEI NAL unit for a given codec
 // (no 4-byte length prefix) — pass a 608 message together with any other SEI
 // messages to place them in the same NAL unit. FrameSEINALU is the one-call
-// convenience for a single 608 frame (BuildCCData + SEIMessage + NALU). The
-// consumer adds the length prefix and splices the NAL before the first VCL NALU.
+// convenience for a single 608 frame (BuildCCData + SEIMessage + NALU).
+//
+// # Samples
+//
+// The NAL unit still has to get into an mp4 sample, which is the same work for
+// every consumer: SpliceSEIBeforeVCL inserts a bare SEI NAL unit into a
+// length-prefixed sample immediately before its first VCL NAL unit, adding the
+// 4-byte length prefix. SampleNALUs and PrefixNALUs are the split/join either side
+// of it — SampleNALUs also feeds FieldPairs on the way back in — and IsVCL is the
+// coded-slice predicate the splice point is found with. A caller that has an
+// mp4.FullSample needs only:
+//
+//	data, err := carriage.SpliceSEIBeforeVCL(s.Data, seiNALU, codec)
+//	// ...
+//	s.Data, s.Size = data, uint32(len(data))
 //
 // A field pair is either 0 or 2 bytes, and carriage keeps the distinct "nothing
 // here" encodings distinct (SPEC §5.3): an empty pair is a cc_valid=0 608
@@ -36,8 +49,9 @@
 // zero, the 0x80 0x80 null pair does not survive this specific round-trip; that is
 // a property of mp4ff's parser, not of the builder.)
 //
-// The codec is an explicit Codec argument on NALU and FieldPairs (it selects the
-// NAL-unit header); carriage never sniffs it. Message building is codec-free.
+// The codec is an explicit Codec argument on NALU, FieldPairs, SpliceSEIBeforeVCL
+// and IsVCL (it selects the NAL-unit header and the VCL types); carriage never
+// sniffs it. Message building and the length framing are codec-free.
 //
 // See SPEC.md section 4.2 / 5.1-5.2 and docs/design/cea608-carriage-seam.md.
 package carriage

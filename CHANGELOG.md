@@ -18,6 +18,15 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   see [Per-unit cues](README.md#per-unit-cues-buildunitcues). `BuildUnitCues` is unchanged
   without the option.
 
+- `carriage.SpliceSEIBeforeVCL(sample, seiNALU, codec)`, plus the supporting
+  `carriage.SampleNALUs`, `carriage.PrefixNALUs` and `carriage.IsVCL`: the sample-level
+  half of the carriage seam — getting a bare SEI NAL unit into an mp4 sample ahead of
+  the picture data, and splitting a sample back into NAL units for `FieldPairs`. This
+  was previously `internal/mp4io`, unreachable from outside go-608, so every consumer
+  had copied it; livesim2 and moqlivemock can now drop their local versions. A sample
+  with no VCL NAL unit gets the SEI appended at the end, which leaves the existing NAL
+  order untouched.
+
 ### Changed
 
 - mp4ff dependency bumped to v0.55.0, and `carriage` now delegates the SEI wire format to
