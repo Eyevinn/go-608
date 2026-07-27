@@ -18,9 +18,10 @@ The full design lives in [`SPEC.md`](SPEC.md), with per-decision rationale in
 ## Why "608" and "cta608"
 
 The modern standard is **CTA-608** (the org renamed from CEA to CTA), so the
-core package is `cta608`. The legacy "CEA-608" spelling persists in prior art
-and in the `mp4ff` dependency's API (`ParseCEA608`, `IsCEA608`); that spelling
-is confined to the `carriage` package that wraps mp4ff.
+core package is `cta608`. The legacy "CEA-608" spelling persists in prior art,
+and used to persist in the `mp4ff` dependency's API; as of mp4ff v0.55.0 that
+API is `ParseCTA608` / `IsCTA608`, so go-608 uses the modern spelling
+throughout.
 
 ## Packages
 
