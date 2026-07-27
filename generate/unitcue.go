@@ -98,10 +98,11 @@ type unitConfig struct {
 //     its decoder state: a fresh decoder has empty non-displayed memory and shows
 //     nothing, while a decoder that keeps 608 state across the discontinuity flips
 //     whatever was last preloaded and can show a stale caption. Either way it is correct
-//     from the next cue on, and a sender cannot prevent it — a sanitising ENM ahead of
-//     the EOC would erase the very build about to be flipped. This is also what a
-//     stream's very first unit looks like: a generator serving units on demand cannot
-//     tell it apart from a mid-stream join.
+//     from the next cue on. Recovering faster belongs to the receiver — a player that
+//     resets its 608 state at a discontinuity turns the stale case into the blank one —
+//     and a sender cannot help: a sanitising ENM ahead of the EOC would erase the very
+//     build about to be flipped. This is also what a stream's very first unit looks
+//     like: a generator serving units on demand cannot tell it apart from a join.
 //   - A unit's first cue is always encoded from a clean encoder state, so the build
 //     placed in the previous unit's tail matches the flip the next unit emits even
 //     though the two are produced by separate calls.
