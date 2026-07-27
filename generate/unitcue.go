@@ -93,10 +93,15 @@ type unitConfig struct {
 // first caption blank. next is called once, as next(0, unitStartMS+unitDurMS).
 //
 // Consequences worth knowing:
-//   - A receiver that starts mid-stream gets a leading EOC with nothing loaded, so it
-//     shows no caption for the first cue period and is correct from the next cue on.
-//     This is also what a stream's very first unit looks like — a generator serving
-//     units on demand cannot tell the two apart.
+//   - A receiver that starts, seeks, or joins mid-stream gets a leading EOC without the
+//     build that belongs to it, and what it shows for that first cue period depends on
+//     its decoder state: a fresh decoder has empty non-displayed memory and shows
+//     nothing, while a decoder that keeps 608 state across the discontinuity flips
+//     whatever was last preloaded and can show a stale caption. Either way it is correct
+//     from the next cue on, and a sender cannot prevent it — a sanitising ENM ahead of
+//     the EOC would erase the very build about to be flipped. This is also what a
+//     stream's very first unit looks like: a generator serving units on demand cannot
+//     tell it apart from a mid-stream join.
 //   - A unit's first cue is always encoded from a clean encoder state, so the build
 //     placed in the previous unit's tail matches the flip the next unit emits even
 //     though the two are produced by separate calls.
