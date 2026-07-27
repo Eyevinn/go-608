@@ -60,10 +60,21 @@ sample 5         FrameHeader(1B)
 Notes that fall out of these fixtures:
 
 - **No temporal-delimiter OBUs.** The mp4 muxer drops them, as the AV1 ISOBMFF binding
-  allows, so a sample starts directly with a sequence-header or frame OBU.
+  allows, so a sample starts directly with a sequence-header or frame OBU. IVF from the same
+  encoder *keeps* them, so a placement rule for the caption OBU has to anchor on the first
+  frame / frame-header OBU rather than on "first in the sample" to mean the same thing in
+  both containers — #52.
 - A temporal unit can hold **several frame OBUs**, and a sample can hold **no frame data at
-  all** (a bare `show_existing_frame` frame header). "One caption OBU per frame" is
-  therefore not the same as "one caption OBU per sample" — #52's problem.
+  all** (a bare `show_existing_frame` frame header). Neither is an *assignment* ambiguity: one
+  sample carries one temporal unit, which outputs exactly one frame, so it is one caption OBU
+  per sample. In sample 2 only one of the three frame OBUs is output and the others are hidden
+  references; the 3-byte samples are still an `OBU_FRAME_HEADER` and so still an anchor. What
+  is left for #52 is *where in the OBU sequence* the caption OBU goes.
+- **Every composition-time offset is 0** (`pts == dts` on all five samples, hierarchical GOP
+  included). AV1 reorders inside the bitstream — hidden frames plus `show_existing_frame` —
+  so it never reaches the container, and AV1 does **not** have the decode-order caption
+  assignment problem that AVC/HEVC do. Verify with
+  `ffprobe -v error -select_streams v:0 -show_entries packet=pts,dts -of csv=p=0 FILE`.
 - The sequence header appears both in the `av1C` `configOBUs` and inline in sample 1.
 
 ### No captioned av01 reference is obtainable locally (#49 verdict)
@@ -99,4 +110,7 @@ interop.
 
 Caveat found while establishing this: the extraction only matches when the input has **no
 B-frames** (`-bf 0`). With B-frames it comes back permuted, because captions are currently
-injected in decode order — see the composition-order issue.
+injected in decode order — see the composition-order issue (#54). That affects **AVC and
+HEVC** identically; the av01 fixtures above are unaffected, since their composition offsets
+are all 0. Note that `-preset ultrafast` disables B-frames in x264 but not in x265, so it is
+an easy way to reproduce nothing when trying to trigger this.
