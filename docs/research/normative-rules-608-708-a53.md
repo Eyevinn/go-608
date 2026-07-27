@@ -72,7 +72,7 @@ Semantics (§4.3, `:817`–`:877`):
 **Ordering rule (§4.3.1, `:878`):** all CEA-608 constructs (`cc_type` 00/01) must appear **at the
 beginning** of the `cc_data()` structure, before any DTVCC (708) constructs. A byte pair with
 `cc_valid=0` and `cc_type=10`/`11` marks the **end of the 608 data** within the structure (§4.3.5,
-`:1146`). This is byte-for-byte what `mp4ff/sei` `ParseCEA608` reads (see prior-art doc §3.3) — go-608
+`:1146`). This is byte-for-byte what `mp4ff/sei` `ParseCTA608` reads (see prior-art doc §3.3) — go-608
 does **not** need its own `cc_data` parser for the mp4ff decode path; it needs the inverse
 **builder**.
 
@@ -101,7 +101,8 @@ SEI payloadType 4: user_data_registered_itu_t_t35() {   // Table 12, scte-128-1-
   identically for AVC.
 - **Table 8 SEI Constraints (`:579`):** the `user_data_registered_itu_t_t35` SEI message is
   **required** for carriage of AFD / closed captioning / bar data (`:590`, `:605`).
-- This is exactly the magic `mp4ff/sei.ITUData.IsCEA608()` checks (`0xB5 / 0x0031 / "GA94" / 0x03`).
+- This is exactly the magic `mp4ff/sei.ITUData.IsCTA608()` checks (`0xB5 / 0x0031 / "GA94" / 0x03`),
+  and what `sei.CTA608ITUData()` emits on the encode side.
   **Confirmed identical.** go-608 should reuse `mp4ff/sei` for the SEI wrap/unwrap and own only the
   `cc_data()`↔byte-pair layer.
 
