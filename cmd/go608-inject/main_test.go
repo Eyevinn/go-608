@@ -192,7 +192,7 @@ func decodeMP4Cues(t *testing.T, path string) []cue.TimedCue {
 	}
 	units := make([]convert.DecodeUnit, 0, len(samples))
 	for _, s := range samples {
-		nalus, err := mp4io.SampleNALUs(s.Data)
+		nalus, err := carriage.SampleNALUs(s.Data)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -222,7 +222,7 @@ func mp4Field1ByFrame(t *testing.T, path string) map[int]string {
 	}
 	out := map[int]string{}
 	for i, s := range samples {
-		nalus, err := mp4io.SampleNALUs(s.Data)
+		nalus, err := carriage.SampleNALUs(s.Data)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -280,7 +280,7 @@ func buildPlainAVC(t *testing.T, fps float64, nFrames int) []byte {
 			vcl = []byte{0x65, 0x88, 0x84, 0x00}
 			flags = mp4.SyncSampleFlags
 		}
-		data := mp4io.PrefixNALUs(vcl)
+		data := carriage.PrefixNALUs(vcl)
 		frag.AddFullSample(mp4.FullSample{
 			Sample:     mp4.Sample{Flags: flags, Dur: frameDur, Size: uint32(len(data))},
 			DecodeTime: uint64(i) * uint64(frameDur),

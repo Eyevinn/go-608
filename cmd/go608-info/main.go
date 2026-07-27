@@ -158,7 +158,7 @@ func dumpMP4(w io.Writer, path string, field int) error {
 				return fmt.Errorf("expanding fragment samples: %w", err)
 			}
 			for _, s := range samples {
-				nalus, err := mp4io.SampleNALUs(s.Data)
+				nalus, err := carriage.SampleNALUs(s.Data)
 				if err != nil {
 					return fmt.Errorf("splitting sample NAL units: %w", err)
 				}
