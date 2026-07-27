@@ -316,10 +316,11 @@ that starts, seeks, or joins mid-stream gets that leading EOC without the build 
 belongs to it. What it then shows depends on its decoder state: a fresh decoder has empty
 non-displayed memory and shows **nothing** for one cue period, while a decoder that keeps
 608 state across the discontinuity flips whatever was last preloaded and can show **one cue
-period of stale caption** before correcting at the next boundary. A sender cannot prevent
-this — any pair emitted ahead of the EOC to sanitise the state (an `ENM`) would erase the
-very build about to be flipped. Choose the default placement if that matters more than
-display accuracy.
+period of stale caption** before correcting at the next boundary. Recovering faster is the
+receiver's job: a player that resets its 608 state at a discontinuity, as it would any
+other decoder, turns the stale case into the blank one. A sender cannot help — any pair
+emitted ahead of the EOC to sanitise the state (an `ENM`) would erase the very build about
+to be flipped. Choose the default placement if that matters more than display accuracy.
 
 Either way the 608 data rate is one pair per frame, so `cc_count` stays `round(600/fps)`,
 and a build that does not fit the frames available to it is a returned error rather than a
