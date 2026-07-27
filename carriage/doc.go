@@ -30,9 +30,9 @@
 //
 // FieldPairs recovers the field byte-pair streams from a sample's NAL units. It
 // decodes the SEI framing directly (sei.ExtractSEIData) and reuses mp4ff's
-// sei.ParseCEA608 for the type-4 T.35 messages, ignoring any other SEI message
+// sei.ParseCTA608 for the type-4 T.35 messages, ignoring any other SEI message
 // types in the sample. It is the inverse of the encode path and feeds the cta608
-// core Decoder. (Because ParseCEA608 drops pairs whose seven low bits are all
+// core Decoder. (Because ParseCTA608 drops pairs whose seven low bits are all
 // zero, the 0x80 0x80 null pair does not survive this specific round-trip; that is
 // a property of mp4ff's parser, not of the builder.)
 //

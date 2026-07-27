@@ -18,6 +18,20 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   see [Per-unit cues](README.md#per-unit-cues-buildunitcues). `BuildUnitCues` is unchanged
   without the option.
 
+### Changed
+
+- mp4ff dependency bumped to v0.55.0, and `carriage` now delegates the SEI wire format to
+  it: `SEIMessage` uses `sei.CreateCTA608SEIMessage` (so the T.35/GA94 header is mp4ff's
+  `sei.CTA608ITUData`, shared with its AV1 metadata-OBU path) and `NALU` uses
+  `avc.CreateSEINalu` / `hevc.CreateSEINalu` for the codec NAL header. go-608's own
+  contribution is now `BuildCCData` — the `cc_data()` structure — and nothing below it.
+  **The emitted bytes are unchanged**, verified byte-for-byte against the previous
+  implementation and now pinned by a golden test; `carriage`'s public API is unchanged too.
+  Note that v0.55.0 renames CEA-608 to CTA-608 across mp4ff's `sei` package
+  (`sei.ParseCEA608` → `sei.ParseCTA608`, `sei.CEA608sei` → `sei.CTA608sei`, and so on,
+  with no aliases), which affects code using mp4ff's `sei` package directly alongside
+  go-608.
+
 ## [0.6.0] - 2026-07-22
 
 ### Added

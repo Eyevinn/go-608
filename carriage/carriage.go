@@ -99,58 +99,47 @@ func checkPair(name string, pair []byte) {
 	}
 }
 
-// The T.35 / GA94 header that precedes cc_data() in the SEI payload (SPEC §5.2):
-// country_code 0xB5, provider_code 0x0031 (ATSC), user_identifier "GA94",
-// user_data_type_code 0x03.
-var t35Header = []byte{0xb5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03}
-
-// AVC/HEVC NAL-unit headers for an SEI message.
-var (
-	avcSEIHeader  = []byte{0x06}       // nal_ref_idc=0, nal_unit_type=6 (SEI)
-	hevcSEIHeader = []byte{0x4e, 0x01} // nal_unit_type=39 (prefix SEI), layer 0, tid+1=1
-)
-
 // SEIMessage wraps a cc_data() payload as a user_data_registered_itu_t_t35 SEI
 // message (T.35/GA94 header + cc_data), returning it as an mp4ff sei.SEIMessage.
+//
+// The T.35/GA94 header — country_code 0xB5, provider_code 0x0031 (ATSC),
+// user_identifier "GA94", user_data_type_code 0x03 (SPEC §5.2) — is mp4ff's
+// sei.CTA608ITUData, the same header its AV1 metadata-OBU path uses: the payload is
+// identical for AVC/HEVC and AV1, and only the envelope differs.
 //
 // The message is codec-identical for AVC and HEVC (SPEC §5.2), so SEIMessage takes
 // no codec. Combine it with other sei.SEIMessage values in a single SEI NAL unit
 // via NALU (or serialize it yourself with sei.WriteSEIMessages); use FrameSEINALU
 // for the common one-message-per-frame case.
 func SEIMessage(ccData []byte) sei.SEIMessage {
-	payload := make([]byte, 0, len(t35Header)+len(ccData))
-	payload = append(payload, t35Header...)
-	payload = append(payload, ccData...)
-	return sei.NewSEIData(sei.SEIUserDataRegisteredITUtT35Type, payload)
+	return sei.CreateCTA608SEIMessage(ccData)
 }
 
 // NALU serializes one or more SEI messages into a bare SEI NAL unit for the codec:
-// the SEI payload (with emulation-prevention, via mp4ff sei.WriteSEIMessages)
-// prefixed by the codec NAL-unit header (AVC 0x06 / HEVC prefix-SEI 39). It returns
-// a bare NAL unit — no 4-byte length prefix; the consumer adds the length and
-// splices the NAL before the first VCL NALU.
+// the SEI payload (with emulation-prevention) prefixed by the codec NAL-unit header
+// (AVC 0x06 / HEVC prefix-SEI 39). It delegates to mp4ff's avc.CreateSEINalu /
+// hevc.CreateSEINalu, which own that header. It returns a bare NAL unit — no 4-byte
+// length prefix; the consumer adds the length and splices the NAL before the first
+// VCL NALU.
 //
 // Passing several messages places them in one SEI NAL unit — e.g. a 608 message
 // alongside a pic_timing or other user_data SEI.
 func NALU(codec Codec, msgs ...sei.SEIMessage) []byte {
-	var header []byte
+	var nalu []byte
+	var err error
 	switch codec {
 	case CodecAVC:
-		header = avcSEIHeader
+		nalu, err = avc.CreateSEINalu(msgs)
 	case CodecHEVC:
-		header = hevcSEIHeader
+		nalu, err = hevc.CreateSEINalu(msgs)
 	default:
 		panic(fmt.Sprintf("carriage: unknown codec %d", int(codec)))
 	}
-
-	var buf bytes.Buffer
-	// WriteSEIMessages never fails writing to a bytes.Buffer.
-	_ = sei.WriteSEIMessages(&buf, msgs)
-	ebsp := buf.Bytes()
-
-	nalu := make([]byte, 0, len(header)+len(ebsp))
-	nalu = append(nalu, header...)
-	nalu = append(nalu, ebsp...)
+	if err != nil {
+		// Unreachable: CreateSEINalu only fails when sei.WriteSEIMessages fails, and
+		// that writes into a bytes.Buffer it allocates itself.
+		panic(fmt.Sprintf("carriage: building %s SEI NAL unit: %v", codec, err))
+	}
 	return nalu
 }
 
@@ -161,8 +150,8 @@ func FrameSEINALU(field1Pair, field2Pair []byte, ccCount int, codec Codec) []byt
 	return NALU(codec, SEIMessage(BuildCCData(field1Pair, field2Pair, ccCount)))
 }
 
-// FieldPairs is the decode wrapper over mp4ff's sei.ParseCEA608. It scans a sample's
-// NAL units for the CEA-608 SEI message and returns the concatenated field-1 and
+// FieldPairs is the decode wrapper over mp4ff's sei.ParseCTA608. It scans a sample's
+// NAL units for the CTA-608 SEI message and returns the concatenated field-1 and
 // field-2 byte-pair streams (parity preserved) to feed the cta608 core Decoder.
 // Non-SEI NAL units are ignored.
 func FieldPairs(sampleNALUs [][]byte, codec Codec) (field1, field2 []byte, err error) {
@@ -178,12 +167,12 @@ func FieldPairs(sampleNALUs [][]byte, codec Codec) (field1, field2 []byte, err e
 			continue
 		}
 		for _, m := range msgs {
-			cea, ok := m.(*sei.CEA608sei)
+			cta, ok := m.(*sei.CTA608sei)
 			if !ok {
 				continue
 			}
-			field1 = append(field1, cea.Field1...)
-			field2 = append(field2, cea.Field2...)
+			field1 = append(field1, cta.Field1...)
+			field2 = append(field2, cta.Field2...)
 		}
 	}
 	return field1, field2, nil
@@ -191,7 +180,7 @@ func FieldPairs(sampleNALUs [][]byte, codec Codec) (field1, field2 []byte, err e
 
 // parseSEI parses one NAL unit if it is an SEI NAL for the given codec, returning
 // only its user_data_registered_itu_t_t35 (type 4) messages — the ones that can
-// carry CEA-608. ok is false for a non-SEI or header-only NAL (which the caller
+// carry CTA-608. ok is false for a non-SEI or header-only NAL (which the caller
 // skips).
 //
 // It decodes the SEI framing directly (sei.ExtractSEIData) rather than via
@@ -229,11 +218,12 @@ func parseSEI(nalu []byte, codec Codec) (msgs []sei.SEIMessage, ok bool, err err
 		if seiDatas[i].Type() != sei.SEIUserDataRegisteredITUtT35Type {
 			continue
 		}
-		// A CEA-608 message needs the 8-byte T.35 header plus at least one cc_data
-		// byte. A shorter type-4 payload can't be CEA-608, and decoding it would read
-		// past the end of mp4ff's payload slice (sei.DecodeUserDataRegisteredSEI reads
-		// payload[0:8] unconditionally; ParseCEA608 then indexes payload[8]).
-		if len(seiDatas[i].Payload()) <= len(t35Header) {
+		// A CTA-608 message needs the 8-byte T.35 header plus at least one cc_data
+		// byte, so a shorter type-4 payload can't be CTA-608. mp4ff no longer panics
+		// on one (it returns an error as of v0.55.0), but skipping is still what we
+		// want: a truncated or foreign type-4 SEI should not abort 608 extraction for
+		// the whole sample, which is what surfacing the error would do.
+		if len(seiDatas[i].Payload()) <= sei.ITUDataSize {
 			continue
 		}
 		m, derr := sei.DecodeUserDataRegisteredSEI(&seiDatas[i])

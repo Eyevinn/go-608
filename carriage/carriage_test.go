@@ -87,12 +87,12 @@ func TestBuildCCDataFieldTypes(t *testing.T) {
 }
 
 // Round-trip through mp4ff's parser (acceptance criterion 1). Uses non-null
-// pairs, since ParseCEA608 filters out pairs whose low-7-bits are all zero.
-func TestBuildCCDataRoundTripParseCEA608(t *testing.T) {
+// pairs, since ParseCTA608 filters out pairs whose low-7-bits are all zero.
+func TestBuildCCDataRoundTripParseCTA608(t *testing.T) {
 	cc := BuildCCData(f1Pair, f2Pair, 20)
-	got1, got2, err := sei.ParseCEA608(cc)
+	got1, got2, err := sei.ParseCTA608(cc)
 	if err != nil {
-		t.Fatalf("ParseCEA608: %v", err)
+		t.Fatalf("ParseCTA608: %v", err)
 	}
 	if !bytes.Equal(got1, f1Pair) {
 		t.Errorf("field1 = % x, want % x", got1, f1Pair)
@@ -153,7 +153,7 @@ func TestSEINALURoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseSEINalu: %v", err)
 			}
-			f1, f2 := cea608FromMsgs(t, msgs)
+			f1, f2 := cta608FromMsgs(t, msgs)
 			if !bytes.Equal(f1, f1Pair) || !bytes.Equal(f2, f2Pair) {
 				t.Errorf("round-trip fields = % x / % x, want % x / % x", f1, f2, f1Pair, f2Pair)
 			}
@@ -166,6 +166,41 @@ func TestFrameSEINALUMatchesComposition(t *testing.T) {
 	got := FrameSEINALU(f1Pair, f2Pair, 20, CodecAVC)
 	if !bytes.Equal(got, want) {
 		t.Errorf("FrameSEINALU != NALU(codec, SEIMessage(BuildCCData(...)))")
+	}
+}
+
+// Golden bytes for the whole encode path, pinned against the worked example in
+// docs/research/av1-metadata-obu-608-layout.md. The T.35/GA94 header now comes from
+// mp4ff (sei.CTA608ITUData), so this is what holds the wire format still: an upstream
+// change to those 8 bytes, or to the SEI framing, breaks here rather than silently
+// shipping. The same payload is what the AV1 metadata OBU carries.
+func TestSEIWireBytesGolden(t *testing.T) {
+	cc := BuildCCData([]byte{0x94, 0x2c}, nil, 3)
+
+	wantPayload := []byte{
+		0xb5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03, // country 0xb5, ATSC 0x0031, "GA94", type 0x03
+		0xc3, 0xff, // cc_count=3 flags, em_data
+		0xfc, 0x94, 0x2c, // field 1: cc_valid=1, cc_type=00
+		0xf9, 0x00, 0x00, // field 2: cc_valid=0, cc_type=01
+		0xfa, 0x00, 0x00, // DTVCC padding
+		0xff, // trailing marker_bits
+	}
+	if got := SEIMessage(cc).Payload(); !bytes.Equal(got, wantPayload) {
+		t.Errorf("SEI payload = % x\n          want = % x", got, wantPayload)
+	}
+
+	// The bare NAL unit: codec NAL header, payload type 4, payload size, then the
+	// payload above, then rbsp_trailing_bits.
+	wantAVC := append([]byte{0x06, 0x04, byte(len(wantPayload))}, wantPayload...)
+	wantAVC = append(wantAVC, 0x80)
+	if got := FrameSEINALU([]byte{0x94, 0x2c}, nil, 3, CodecAVC); !bytes.Equal(got, wantAVC) {
+		t.Errorf("AVC NALU = % x\n     want = % x", got, wantAVC)
+	}
+
+	wantHEVC := append([]byte{0x4e, 0x01, 0x04, byte(len(wantPayload))}, wantPayload...)
+	wantHEVC = append(wantHEVC, 0x80)
+	if got := FrameSEINALU([]byte{0x94, 0x2c}, nil, 3, CodecHEVC); !bytes.Equal(got, wantHEVC) {
+		t.Errorf("HEVC NALU = % x\n     want = % x", got, wantHEVC)
 	}
 }
 
@@ -219,9 +254,9 @@ func TestFieldPairsIgnoresOtherSEITypes(t *testing.T) {
 	// A pic_timing SEI (payloadType 1) whose payload mp4ff cannot decode without an
 	// SPS (pict_struct 15 is invalid) — decoding it would error.
 	picTiming := []byte{0x06, 0x01, 0x01, 0xf0, 0x80}
-	cea := FrameSEINALU(f1Pair, nil, 20, CodecAVC)
+	cta := FrameSEINALU(f1Pair, nil, 20, CodecAVC)
 
-	f1, f2, err := FieldPairs([][]byte{picTiming, cea}, CodecAVC)
+	f1, f2, err := FieldPairs([][]byte{picTiming, cta}, CodecAVC)
 	if err != nil {
 		t.Fatalf("FieldPairs: %v", err)
 	}
@@ -259,12 +294,12 @@ func TestFieldPairsShortNALUNoPanic(t *testing.T) {
 	}
 }
 
-func cea608FromMsgs(t *testing.T, msgs []sei.SEIMessage) (f1, f2 []byte) {
+func cta608FromMsgs(t *testing.T, msgs []sei.SEIMessage) (f1, f2 []byte) {
 	t.Helper()
 	for _, m := range msgs {
-		if cea, ok := m.(*sei.CEA608sei); ok {
-			f1 = append(f1, cea.Field1...)
-			f2 = append(f2, cea.Field2...)
+		if cta, ok := m.(*sei.CTA608sei); ok {
+			f1 = append(f1, cta.Field1...)
+			f2 = append(f2, cta.Field2...)
 		}
 	}
 	return f1, f2

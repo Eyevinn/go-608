@@ -120,7 +120,7 @@ func TestCarriageMP4FixtureRoundTrip(t *testing.T) {
 }
 
 // buildFixtureMP4 synthesizes an init segment + one media segment for a single AVC
-// track whose samples each carry a CEA-608 SEI NAL (from FrameSEINALU) ahead of a
+// track whose samples each carry a CTA-608 SEI NAL (from FrameSEINALU) ahead of a
 // dummy VCL NAL. It is the only place carriage touches mp4ff's mp4 package, and only
 // in tests.
 func buildFixtureMP4(t *testing.T) []byte {
