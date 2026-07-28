@@ -308,13 +308,13 @@ func spliceInput(
 	frames := 0
 	// Drive the caption by frame index at the chosen rate (start + i*frameDur), so
 	// the two lines stay in lockstep and the clock advances one second per second.
-	seiFor := func(info mp4io.SampleInfo) ([]byte, error) {
+	ccFor := func(info mp4io.SampleInfo) ([]byte, error) {
 		wallMS := startMS + int64(math.Round(float64(info.Index)*frameDurMS))
 		fr := gen.NextFrame(wallMS)
 		frames = info.Index + 1
-		return carriage.FrameSEINALU(fr.Field1, fr.Field2, fr.CCCount, track.Codec), nil
+		return carriage.BuildCCData(fr.Field1, fr.Field2, fr.CCCount), nil
 	}
-	if err := mp4io.SpliceFragmented(f, track, trex, out, seiFor); err != nil {
+	if err := mp4io.SpliceFragmented(f, track, trex, out, ccFor); err != nil {
 		return false, err
 	}
 	fmt.Fprintf(status, "%s: spliced %s into %d %s frames at %g fps\n", appName, inPath, frames, track.Codec, fps)

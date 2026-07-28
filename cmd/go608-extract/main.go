@@ -32,7 +32,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/cue"
 	"github.com/Eyevinn/go-608/internal"
 	"github.com/Eyevinn/go-608/internal/convert"
@@ -168,17 +167,13 @@ func pairsFromMP4(path string) ([]scc.TimedPair, error) {
 	if err != nil {
 		return nil, err
 	}
-	samples, err := mp4io.Samples(f, trex)
+	samples, _, err := mp4io.Samples(f, trex)
 	if err != nil {
 		return nil, err
 	}
 	var pairs []scc.TimedPair
 	for i, s := range samples {
-		nalus, err := carriage.SampleNALUs(s.Data)
-		if err != nil {
-			return nil, fmt.Errorf("splitting sample NAL units: %w", err)
-		}
-		f1, _, err := carriage.FieldPairs(nalus, track.Codec)
+		f1, _, err := mp4io.FieldPairs(s.Data, track.Codec)
 		if err != nil {
 			return nil, fmt.Errorf("extracting 608 field pairs: %w", err)
 		}
@@ -243,7 +238,7 @@ func cuesFromMP4(path string, opts convert.Options) ([]cue.TimedCue, error) {
 	if err != nil {
 		return nil, err
 	}
-	samples, err := mp4io.Samples(f, trex)
+	samples, origin, err := mp4io.Samples(f, trex)
 	if err != nil {
 		return nil, err
 	}
@@ -253,16 +248,14 @@ func cuesFromMP4(path string, opts convert.Options) ([]cue.TimedCue, error) {
 	}
 	units := make([]convert.DecodeUnit, 0, len(samples))
 	for _, s := range samples {
-		nalus, err := carriage.SampleNALUs(s.Data)
-		if err != nil {
-			return nil, fmt.Errorf("splitting sample NAL units: %w", err)
-		}
-		f1, _, err := carriage.FieldPairs(nalus, track.Codec)
+		f1, _, err := mp4io.FieldPairs(s.Data, track.Codec)
 		if err != nil {
 			return nil, fmt.Errorf("extracting 608 field pairs: %w", err)
 		}
 		units = append(units, convert.DecodeUnit{
-			TimeMS: int64(math.Round(float64(s.DecodeTime) * 1000 / timescale)),
+			// Presentation time relative to the track origin — the same clock
+			// go608-inject schedules on, so a round-trip lands back on t=0.
+			TimeMS: int64(math.Round(float64(s.PresentationTime()-origin) * 1000 / timescale)),
 			Field1: f1,
 		})
 	}
@@ -303,17 +296,13 @@ func dumpMP4(w io.Writer, path string) error {
 	if err != nil {
 		return err
 	}
-	samples, err := mp4io.Samples(f, trex)
+	samples, _, err := mp4io.Samples(f, trex)
 	if err != nil {
 		return err
 	}
 	units := make([]dump.Unit, 0, len(samples))
 	for _, s := range samples {
-		nalus, err := carriage.SampleNALUs(s.Data)
-		if err != nil {
-			return fmt.Errorf("splitting sample NAL units: %w", err)
-		}
-		f1, f2, err := carriage.FieldPairs(nalus, track.Codec)
+		f1, f2, err := mp4io.FieldPairs(s.Data, track.Codec)
 		if err != nil {
 			return fmt.Errorf("extracting 608 field pairs: %w", err)
 		}
