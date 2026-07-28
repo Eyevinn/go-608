@@ -9,6 +9,8 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-28
+
 ### Added
 
 - **AV1 (`av01`) CTA-608 carriage**, end to end. `carriage.MetadataOBU(ccData)` wraps a
@@ -49,6 +51,20 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   with no VCL NAL unit gets the SEI appended at the end, which leaves the existing NAL
   order untouched.
 
+### Changed
+
+- mp4ff dependency bumped to v0.55.0, and `carriage` now delegates the SEI wire format to
+  it: `SEIMessage` uses `sei.CreateCTA608SEIMessage` (so the T.35/GA94 header is mp4ff's
+  `sei.CTA608ITUData`, shared with its AV1 metadata-OBU path) and `NALU` uses
+  `avc.CreateSEINalu` / `hevc.CreateSEINalu` for the codec NAL header. go-608's own
+  contribution is now `BuildCCData` — the `cc_data()` structure — and nothing below it.
+  **The emitted bytes are unchanged**, verified byte-for-byte against the previous
+  implementation and now pinned by a golden test; `carriage`'s public API is unchanged too.
+  Note that v0.55.0 renames CEA-608 to CTA-608 across mp4ff's `sei` package
+  (`sei.ParseCEA608` → `sei.ParseCTA608`, `sei.CEA608sei` → `sei.CTA608sei`, and so on,
+  with no aliases), which affects code using mp4ff's `sei` package directly alongside
+  go-608.
+
 ### Fixed
 
 - **Captions were assigned in decode order**, so any B-frame AVC or HEVC input came out
@@ -68,20 +84,6 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   by that offset. Media time is now measured from the track origin — the smallest
   presentation time in the file — so subtitle-file `t=0` lands on the first *displayed*
   frame. Edit lists remain unconsulted, as before.
-
-### Changed
-
-- mp4ff dependency bumped to v0.55.0, and `carriage` now delegates the SEI wire format to
-  it: `SEIMessage` uses `sei.CreateCTA608SEIMessage` (so the T.35/GA94 header is mp4ff's
-  `sei.CTA608ITUData`, shared with its AV1 metadata-OBU path) and `NALU` uses
-  `avc.CreateSEINalu` / `hevc.CreateSEINalu` for the codec NAL header. go-608's own
-  contribution is now `BuildCCData` — the `cc_data()` structure — and nothing below it.
-  **The emitted bytes are unchanged**, verified byte-for-byte against the previous
-  implementation and now pinned by a golden test; `carriage`'s public API is unchanged too.
-  Note that v0.55.0 renames CEA-608 to CTA-608 across mp4ff's `sei` package
-  (`sei.ParseCEA608` → `sei.ParseCTA608`, `sei.CEA608sei` → `sei.CTA608sei`, and so on,
-  with no aliases), which affects code using mp4ff's `sei` package directly alongside
-  go-608.
 
 ## [0.6.0] - 2026-07-22
 
@@ -189,6 +191,7 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   `go608-info`) and extends `internal/mp4io` with a reusable `SpliceFragmented`
   fragment rewriter (also adopted by `go608-clock`) and a `Samples` flattener.
 
-[Unreleased]: https://github.com/Eyevinn/go-608/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/go-608/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.5.0
