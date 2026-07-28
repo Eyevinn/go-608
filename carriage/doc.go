@@ -1,5 +1,6 @@
-// Package carriage carries CTA-608 caption data as cc_data() inside AVC/HEVC
-// SEI, wrapping github.com/Eyevinn/mp4ff for the SEI/NAL layer.
+// Package carriage carries CTA-608 caption data as cc_data() inside AVC/HEVC SEI
+// or an AV1 metadata OBU, wrapping github.com/Eyevinn/mp4ff for the SEI/NAL and
+// OBU layers.
 //
 // It is the only package in go-608 that imports mp4ff, and it is pure and
 // timing-free: the per-frame cc_count is supplied by the caller (from the
@@ -53,5 +54,25 @@
 // and IsVCL (it selects the NAL-unit header and the VCL types); carriage never
 // sniffs it. Message building and the length framing are codec-free.
 //
-// See SPEC.md section 4.2 / 5.1-5.2 and docs/design/cea608-carriage-seam.md.
+// # AV1
+//
+// AV1 carries the same cc_data() — BuildCCData is reused unchanged — under the same
+// T.35/GA94 header; only the envelope and the splice differ. MetadataOBU wraps a
+// cc_data() payload as a metadata_itu_t_t35 OBU (no emulation prevention, unlike an
+// SEI NAL unit), FrameMetadataOBU is the one-call form mirroring FrameSEINALU,
+// SpliceOBUBeforeFrame places the OBU in a sample before the first frame OBU, and
+// OBUFieldPairs reads the pairs back out of a raw sample.
+//
+// These run parallel to the SEI functions rather than extending them, and none takes
+// a Codec — Codec names NAL framing, which AV1 does not have, so it stays two-valued.
+// A consumer handling all three codecs owns its own three-value discriminator; that
+// is deliberate, since adding an AV1 value to Codec would have left every existing
+// consumer switch compiling while quietly captioning nothing for av01.
+//
+// AV1 support is scoped to non-scalable streams (OperatingPointIdc == 0): one caption
+// OBU per sample is well defined only because a temporal unit shows exactly one
+// frame, which the spec guarantees only in that case.
+//
+// See SPEC.md section 4.2 / 5.1-5.2, docs/design/cea608-carriage-seam.md, and
+// docs/research/av1-metadata-obu-608-layout.md.
 package carriage

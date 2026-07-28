@@ -11,6 +11,28 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ### Added
 
+- **AV1 (`av01`) CTA-608 carriage**, end to end. `carriage.MetadataOBU(ccData)` wraps a
+  `cc_data()` payload as a `metadata_itu_t_t35` OBU, `carriage.FrameMetadataOBU(field1,
+  field2, ccCount)` is the one-call form mirroring `FrameSEINALU`,
+  `carriage.SpliceOBUBeforeFrame(sample, obu)` places it in a sample before the first
+  `OBU_FRAME` / `OBU_FRAME_HEADER`, and `carriage.OBUFieldPairs(sample)` reads the pairs
+  back. `go608-inject`, `go608-extract`, `go608-info` and `go608-clock` accept `av01`
+  input. The `cc_data()` and its T.35/GA94 header are shared with the SEI path unchanged;
+  only the envelope and the splice differ.
+
+  The AV1 functions are **parallel to** the SEI ones and take no `Codec` —
+  `carriage.Codec` names NAL framing, which AV1 does not have, so it stays two-valued.
+  A consumer handling all three codecs needs its own three-value discriminator; that is
+  deliberate, since adding a third `Codec` value would have left every existing consumer
+  switch compiling while quietly captioning nothing for `av01`.
+
+  Scoped to **non-scalable AV1** (`OperatingPointIdc == 0`): one caption OBU per sample
+  is well defined only because a temporal unit shows exactly one frame. A scalable
+  `av01` track is rejected rather than guessed at.
+
+  Validated with ffmpeg as an independent decoder (`movie=FILE.mp4[out0+subcc]`): an
+  injected av01 file comes back byte-identical to the AVC output of the same injection.
+
 - `generate.WithFlipAtCueStart(next)`: an option for `BuildUnitCues` that puts each cue's
   EOC on the first frame of its own slice and transmits the pop-on build over the
   preceding frames, so a caption is displayed over exactly the interval its content names
@@ -26,6 +48,26 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   had copied it; livesim2 and moqlivemock can now drop their local versions. A sample
   with no VCL NAL unit gets the SEI appended at the end, which leaves the existing NAL
   order untouched.
+
+### Fixed
+
+- **Captions were assigned in decode order**, so any B-frame AVC or HEVC input came out
+  permuted in third-party decoders — ffmpeg read `Hello, world!` back as
+  `llHeo, ldor! w`, measured identically on both codecs. Payloads are now assigned in
+  **presentation order**: the k-th payload rides the k-th displayed frame, on both the
+  write and the read side. Samples are still written in decode order, which the container
+  requires. The internal round-trip was green throughout, because the read side repeated
+  the write side's mistake; the new `testdata/bframes-avc.mp4` and
+  `testdata/bframes-hevc.mp4` fixtures are the first with non-zero composition offsets.
+  AV1 is unaffected — it reorders inside the bitstream, so its composition offsets are
+  always 0 — but the rule is codec-free rather than a special case.
+
+- **Subtitle timing ignored the track's presentation-time origin.** `go608-inject` looked
+  the scheduler up by absolute decode time, so a track whose first presentation time was
+  not 0 (measured: `start_pts=1024`, 66.7 ms at timescale 15360) had every caption shifted
+  by that offset. Media time is now measured from the track origin — the smallest
+  presentation time in the file — so subtitle-file `t=0` lands on the first *displayed*
+  frame. Edit lists remain unconsulted, as before.
 
 ### Changed
 

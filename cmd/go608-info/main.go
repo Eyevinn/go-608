@@ -7,8 +7,8 @@
 // Two input modes:
 //
 //   - mp4 (-i file.mp4): decode a fragmented mp4, locate its single video track,
-//     and for each sample extract the field-1/field-2 608 byte pairs from the
-//     CEA-608 SEI (via internal/mp4io + carriage.FieldPairs).
+//     and for each sample extract the field-1/field-2 608 byte pairs (via
+//     internal/mp4io, which picks the SEI or metadata-OBU path by codec).
 //   - raw cc_data (-hex "9420 94ae ..." or -cc-file pairs.txt): decode a hex
 //     byte-pair stream directly, no mp4 needed.
 //
@@ -133,8 +133,9 @@ func run(args []string, w io.Writer) error {
 	}
 }
 
-// dumpMP4 reads a fragmented mp4, extracts the 608 field pairs from every sample's
-// CEA-608 SEI, and writes the field-pair / token / Screen dump.
+// dumpMP4 reads a fragmented mp4, extracts the 608 field pairs from every sample —
+// AVC/HEVC SEI or an AV1 metadata OBU — and writes the field-pair / token / Screen
+// dump, in presentation order.
 func dumpMP4(w io.Writer, path string, field int) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {

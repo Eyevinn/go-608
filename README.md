@@ -9,8 +9,9 @@
 [![license](https://img.shields.io/github/license/Eyevinn/go-608.svg)](https://github.com/Eyevinn/go-608/blob/main/LICENSE)
 
 A pure-Go library for **CTA-608 / CEA-608** captions: encode + decode,
-`cc_data` + SEI carriage per ATSC A/53 (AVC & HEVC), wall-clock caption
-generation, and timed-text (SCC / WebVTT / SRT) I/O.
+`cc_data` carriage per ATSC A/53 — SEI for AVC & HEVC, `metadata_itu_t_t35`
+OBU for AV1 — wall-clock caption generation, and timed-text (SCC / WebVTT /
+SRT) I/O.
 
 The full design lives in [`SPEC.md`](SPEC.md), with per-decision rationale in
 [`docs/design/`](docs/design/).
@@ -32,7 +33,7 @@ the packages directly.
 | Package    | Responsibility                                                        |
 |------------|----------------------------------------------------------------------|
 | `cta608`   | Pure core: Token stream, `Screen`, `Serialize`/`Parse`, `Decoder`/`Encoder`, `CaptionBlock`. A dependency-free leaf. |
-| `carriage` | `cc_data` / T.35 / SEI / NAL carriage for AVC & HEVC. The only mp4ff importer. |
+| `carriage` | `cc_data` / T.35 carriage: SEI + NAL for AVC & HEVC, metadata OBU for AV1. The only mp4ff importer. |
 | `schedule` | Timed tokens → per-frame `{Field1, Field2, CCCount}`. The shared timing layer. |
 | `generate` | Wall-clock caption `Generator` (the first milestone).                |
 | `scc`      | Scenarist SCC read/write — byte-exact, true SMPTE drop-frame.        |
@@ -221,6 +222,47 @@ field1, field2, err := carriage.FieldPairs(sampleNALUs, carriage.CodecAVC)
 `FieldPairs` wraps mp4ff's `sei.ParseCTA608`; the recovered pairs feed the `cta608`
 core `Decoder`. See `examples/` for a runnable round-trip and `testdata/` for a
 fragmented-mp4 fixture.
+
+### AV1 (`av01`)
+
+AV1 carries the **same `cc_data()`** — `BuildCCData` is reused unchanged — under the
+same T.35/GA94 header. Only the envelope and the splice differ: a
+`metadata_itu_t_t35` OBU instead of an SEI NAL unit, with no emulation prevention.
+
+The AV1 functions run **parallel** to the SEI ones rather than extending them, and
+none takes a `Codec`:
+
+```go
+// Encode: one frame's caption OBU, then into the sample.
+obu := carriage.FrameMetadataOBU(field1, field2, ccCount)   // mirrors FrameSEINALU
+data, err := carriage.SpliceOBUBeforeFrame(sample.Data, obu) // mirrors SpliceSEIBeforeVCL
+s.Data, s.Size = data, uint32(len(data))
+
+// Envelope level, when the cc_data() is built elsewhere.
+obu = carriage.MetadataOBU(carriage.BuildCCData(field1, field2, ccCount))
+
+// Decode: takes the raw sample, not a pre-split OBU list.
+field1, field2, err := carriage.OBUFieldPairs(sample.Data)
+```
+
+`carriage.Codec` deliberately stays **two-valued**: it names NAL framing, which AV1
+does not have. A consumer handling all three codecs therefore needs its own
+three-value discriminator — the point being that it will fail to compile rather than
+compile into a switch that quietly captions nothing for `av01`.
+
+The OBU is placed after any sequence header and immediately before the first
+`OBU_FRAME` / `OBU_FRAME_HEADER`. Anchoring on the frame OBU rather than on a
+position from the start of the sample makes the rule mean the same thing in mp4
+(where the muxer strips temporal delimiters) and in IVF (where it does not). Unlike
+`SpliceSEIBeforeVCL` there is no no-anchor fallback: every temporal unit must output
+a frame, so a sample without one is malformed and is reported as an error.
+
+Assignment is **one caption OBU per sample, in sample order** — one sample is one
+temporal unit, and a temporal unit shows exactly one frame. Several frame OBUs in a
+sample (hidden reference frames) are not an ambiguity. This rests on
+`OperatingPointIdc == 0`: **scalable AV1 is not supported**, because the spec then
+allows one shown frame per layer and "the caption for this sample" stops naming a
+single picture. The go-608 tools reject a scalable `av01` track rather than guess.
 
 ## Scheduling (timed tokens → frames)
 

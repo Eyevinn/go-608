@@ -11,7 +11,7 @@
 //     placeholder VCL bytes (there is no in-tree H.264 encoder), so the output is
 //     a structurally valid fMP4 for round-tripping the 608 — not decodable
 //     pictures. This is the deterministic demo/round-trip path.
-//   - Input (-i file.mp4): read a single-video-track fragmented mp4 (AVC or HEVC,
+//   - Input (-i file.mp4): read a single-video-track fragmented mp4 (AVC, HEVC or AV1,
 //     auto-detected) and splice the caption SEI into every frame, preserving the
 //     original sample timing — captioning real, playable video.
 //
@@ -63,7 +63,7 @@ fragmented mp4 (the go-608 first-milestone demo).
 
 Without -i it emits a self-contained synthetic AVC fMP4 (placeholder video, real
 608 SEI); with -i it splices the caption into every frame of an existing
-single-video-track fragmented mp4 (AVC or HEVC), preserving its timing.
+single-video-track fragmented mp4 (AVC, HEVC or AV1), preserving its timing.
 
 Usage of %s:
 `
