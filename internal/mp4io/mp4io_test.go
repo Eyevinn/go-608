@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
@@ -22,7 +21,7 @@ func TestVideoTrackAVC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VideoTrack: %v", err)
 	}
-	if track.Codec != carriage.CodecAVC {
+	if track.Codec != CodecAVC {
 		t.Errorf("codec = %s, want AVC", track.Codec)
 	}
 	if track.ID != 1 {

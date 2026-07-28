@@ -168,18 +168,18 @@ func injectMP4(
 		return err
 	}
 
-	var seiFor mp4io.SEIFunc
+	var ccFor mp4io.CCDataFunc
 	if subFormat == convert.FormatSCC {
-		seiFor, err = sccSEIFunc(opts.sub, opts.fps, policy, track.Codec)
+		ccFor, err = sccCCDataFunc(opts.sub, opts.fps, policy)
 	} else {
-		seiFor, err = subtitleSEIFunc(subFormat, opts, convOpts, track)
+		ccFor, err = subtitleCCDataFunc(subFormat, opts, convOpts, track)
 	}
 	if err != nil {
 		return err
 	}
 
 	var buf bytes.Buffer
-	if err := mp4io.SpliceFragmented(f, track, trex, &buf, seiFor); err != nil {
+	if err := mp4io.SpliceFragmented(f, track, trex, &buf, ccFor); err != nil {
 		return err
 	}
 	if err := os.WriteFile(opts.output, buf.Bytes(), 0o644); err != nil {
@@ -189,11 +189,11 @@ func injectMP4(
 	return nil
 }
 
-// sccSEIFunc injects an SCC file's byte pairs verbatim, frame for frame: SCC frame
-// n rides on sample n's field 1. The scheduler is used only to size the per-frame
-// cc_count (nothing is queued on it), so the pairs themselves are untouched and
-// survive the round-trip byte-exact.
-func sccSEIFunc(path string, fps float64, policy schedule.CCCountPolicy, codec carriage.Codec) (mp4io.SEIFunc, error) {
+// sccCCDataFunc injects an SCC file's byte pairs verbatim, frame for frame: SCC frame
+// n rides on the n-th displayed frame's field 1. The scheduler is used only to size
+// the per-frame cc_count (nothing is queued on it), so the pairs themselves are
+// untouched and survive the round-trip byte-exact.
+func sccCCDataFunc(path string, fps float64, policy schedule.CCCountPolicy) (mp4io.CCDataFunc, error) {
 	r, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
@@ -213,16 +213,16 @@ func sccSEIFunc(path string, fps float64, policy schedule.CCCountPolicy, codec c
 		// Frame with an empty queue yields this frame's cc_count and an empty pair;
 		// substitute the SCC pair for this frame (or nothing) as field 1.
 		fr := sched.Frame(int64(info.Index))
-		return carriage.FrameSEINALU(byFrame[info.Index], nil, fr.CCCount, codec), nil
+		return carriage.BuildCCData(byFrame[info.Index], nil, fr.CCCount), nil
 	}, nil
 }
 
-// subtitleSEIFunc compiles a WebVTT/SRT input to pop-on token transitions and
-// schedules them, returning an SEIFunc that drains the scheduler at each sample's
-// media time (decode time / timescale).
-func subtitleSEIFunc(
+// subtitleCCDataFunc compiles a WebVTT/SRT input to pop-on token transitions and
+// schedules them, returning a CCDataFunc that drains the scheduler at each sample's
+// media time.
+func subtitleCCDataFunc(
 	subFormat convert.Format, opts *options, convOpts convert.Options, track mp4io.Track,
-) (mp4io.SEIFunc, error) {
+) (mp4io.CCDataFunc, error) {
 	r, err := os.Open(opts.sub)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", opts.sub, err)
@@ -242,9 +242,12 @@ func subtitleSEIFunc(
 		timescale = opts.fps
 	}
 	return func(info mp4io.SampleInfo) ([]byte, error) {
-		mediaMS := int64(math.Round(float64(info.DecodeTime) * 1000 / timescale))
+		// MediaTime is the presentation time measured from the track origin, so
+		// subtitle-file t=0 lands on the first displayed frame whatever absolute
+		// timestamps the container starts at.
+		mediaMS := int64(math.Round(float64(info.MediaTime) * 1000 / timescale))
 		fr := sched.Frame(mediaMS)
-		return carriage.FrameSEINALU(fr.Field1, fr.Field2, fr.CCCount, track.Codec), nil
+		return carriage.BuildCCData(fr.Field1, fr.Field2, fr.CCCount), nil
 	}, nil
 }
 

@@ -35,7 +35,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/internal"
 	"github.com/Eyevinn/go-608/internal/dump"
 	"github.com/Eyevinn/go-608/internal/mp4io"
@@ -150,25 +149,17 @@ func dumpMP4(w io.Writer, path string, field int) error {
 		return err
 	}
 
-	var units []dump.Unit
-	for _, seg := range f.Segments {
-		for _, frag := range seg.Fragments {
-			samples, err := frag.GetFullSamples(trex)
-			if err != nil {
-				return fmt.Errorf("expanding fragment samples: %w", err)
-			}
-			for _, s := range samples {
-				nalus, err := carriage.SampleNALUs(s.Data)
-				if err != nil {
-					return fmt.Errorf("splitting sample NAL units: %w", err)
-				}
-				f1, f2, err := carriage.FieldPairs(nalus, track.Codec)
-				if err != nil {
-					return fmt.Errorf("extracting 608 field pairs: %w", err)
-				}
-				units = append(units, dump.Unit{Field1: f1, Field2: f2})
-			}
+	samples, _, err := mp4io.Samples(f, trex)
+	if err != nil {
+		return err
+	}
+	units := make([]dump.Unit, 0, len(samples))
+	for _, s := range samples {
+		f1, f2, err := mp4io.FieldPairs(s.Data, track.Codec)
+		if err != nil {
+			return fmt.Errorf("extracting 608 field pairs: %w", err)
 		}
+		units = append(units, dump.Unit{Field1: f1, Field2: f2})
 	}
 
 	header := fmt.Sprintf("source: %s (codec %s, %d frames, field %d)", path, track.Codec, len(units), field)

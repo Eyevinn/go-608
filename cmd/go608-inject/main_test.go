@@ -186,22 +186,18 @@ func screenText(c cue.TimedCue) string {
 func decodeMP4Cues(t *testing.T, path string) []cue.TimedCue {
 	t.Helper()
 	f, track, trex := openMP4Test(t, path)
-	samples, err := mp4io.Samples(f, trex)
+	samples, origin, err := mp4io.Samples(f, trex)
 	if err != nil {
 		t.Fatal(err)
 	}
 	units := make([]convert.DecodeUnit, 0, len(samples))
 	for _, s := range samples {
-		nalus, err := carriage.SampleNALUs(s.Data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		f1, _, err := carriage.FieldPairs(nalus, track.Codec)
+		f1, _, err := mp4io.FieldPairs(s.Data, track.Codec)
 		if err != nil {
 			t.Fatal(err)
 		}
 		units = append(units, convert.DecodeUnit{
-			TimeMS: int64(math.Round(float64(s.DecodeTime) * 1000 / float64(track.Timescale))),
+			TimeMS: int64(math.Round(float64(s.PresentationTime()-origin) * 1000 / float64(track.Timescale))),
 			Field1: f1,
 		})
 	}
@@ -216,17 +212,13 @@ func decodeMP4Cues(t *testing.T, path string) []cue.TimedCue {
 func mp4Field1ByFrame(t *testing.T, path string) map[int]string {
 	t.Helper()
 	f, track, trex := openMP4Test(t, path)
-	samples, err := mp4io.Samples(f, trex)
+	samples, _, err := mp4io.Samples(f, trex)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := map[int]string{}
 	for i, s := range samples {
-		nalus, err := carriage.SampleNALUs(s.Data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		f1, _, err := carriage.FieldPairs(nalus, track.Codec)
+		f1, _, err := mp4io.FieldPairs(s.Data, track.Codec)
 		if err != nil {
 			t.Fatal(err)
 		}
