@@ -110,12 +110,14 @@ same command at our own av01 output therefore validates the OBU against a third-
 implementation, which is weaker than a reference file for byte-exactness but strong for
 interop.
 
-Caveat found while establishing this: the extraction only matches when the input has **no
-B-frames** (`-bf 0`). With B-frames it comes back permuted, because captions are currently
-injected in decode order — see the composition-order issue (#54). That affects **AVC and
-HEVC** identically; the av01 fixtures above are unaffected, since their composition offsets
-are all 0. Note that `-preset ultrafast` disables B-frames in x264 but not in x265, so it is
-an easy way to reproduce nothing when trying to trigger this.
+Since verified on the av01 side too: injecting `srt/basic.srt` into a 10 s libsvtav1 clip
+built the same way comes back out of ffmpeg **byte-identical to the AVC output** of the same
+injection. That is the interop bar #49 defined, met.
+
+Caveat found while establishing this, now fixed: the extraction originally only matched when
+the input had **no B-frames** (`-bf 0`), because captions were injected in decode order (the
+composition-order issue, #54). Captions are now assigned in presentation order, so B-frame
+input round-trips correctly too — see the B-frame fixtures below.
 
 ## B-frame fixtures (#54)
 

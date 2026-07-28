@@ -1,16 +1,21 @@
-// Command go608-inject injects CTA-608 as SEI into a fragmented mp4 from WebVTT,
-// SRT, or SCC input — the encode-side integration capstone (SPEC §6/§8 §9). It
-// wires the encode stack: the timed-text readers → cue.Compile → schedule →
-// carriage → an SEI spliced before the first VCL NAL of every frame (via
-// internal/mp4io.SpliceFragmented, shared with go608-clock).
+// Command go608-inject injects CTA-608 into a fragmented mp4 from WebVTT, SRT, or
+// SCC input — the encode-side integration capstone (SPEC §6/§8 §9). It wires the
+// encode stack: the timed-text readers → cue.Compile → schedule → carriage → a
+// caption unit spliced into every frame (via internal/mp4io.SpliceFragmented,
+// shared with go608-clock), which is an SEI NAL before the first VCL NAL for
+// AVC/HEVC and a metadata OBU before the first frame OBU for AV1.
 //
 // Two subtitle paths feed the mp4:
 //
 //   - WebVTT/SRT: read into cues, compiled to pop-on token transitions, scheduled
 //     one pair per frame at the target fps with the chosen cc_count policy.
 //   - SCC: injected byte-exactly — its verbatim byte pairs ride frame for frame
-//     (SCC frame n → sample n), so the pairs survive the round-trip through
-//     carriage untouched; the scheduler is used only to size cc_count.
+//     (SCC frame n → the n-th displayed frame), so the pairs survive the round-trip
+//     through carriage untouched; the scheduler is used only to size cc_count.
+//
+// Captions are assigned in presentation order and scheduled from the track origin —
+// the smallest presentation time in the file — so subtitle-file t=0 lands on the
+// first displayed frame regardless of B-frame reordering or a non-zero start PTS.
 //
 // Format-only conversion (WebVTT/SRT/SCC ⇄ each other, no mp4) is a mode of this
 // tool, sharing the exact conversion core (internal/convert) with go608-extract.
@@ -44,7 +49,8 @@ import (
 
 const appName = "go608-inject"
 
-var usg = `%s injects CTA-608 as SEI into a fragmented mp4 from WebVTT / SRT / SCC.
+var usg = `%s injects CTA-608 into a fragmented mp4 (AVC, HEVC or AV1) from
+WebVTT / SRT / SCC.
 WebVTT/SRT are compiled to pop-on captions; SCC pairs are injected byte-exactly.
 Format-only conversion (no mp4) is a mode: omit -i and give a timed-text -o.
 
