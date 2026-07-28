@@ -118,7 +118,15 @@ func WithFlipAtCueStart(next CueContentFunc) UnitOption {
 // unit into N = NumCues(unitDurMS, targetPeriodMS) equal cue slices, calls content
 // for each slice's lines, and schedules a pop-on build + EOC flip for each slice.
 // Frame i of the returned slice is consumed by
-// carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, codec).
+// carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, codec) for AVC/HEVC, or
+// carriage.FrameMetadataOBU(f.Field1, f.Field2, f.CCCount) for AV1.
+//
+// Frame i belongs to the sample with the i-th smallest presentation time — the i-th
+// *displayed* frame of the unit, not the i-th sample in decode order. The two differ
+// whenever the video reorders in the container (B-frames in AVC/HEVC; AV1 reorders
+// inside the bitstream instead, so for it they always coincide). A caller that walks
+// its samples in decode order will scramble the captions, and will not notice by
+// reading them back with the same mistake.
 //
 // By default each cue is self-contained within its slice: the build drains from the
 // slice's first frame and the flip follows it. Pass WithFlipAtCueStart to align each
