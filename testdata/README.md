@@ -8,6 +8,8 @@ Shared test fixtures for go-608. Populated by the package tickets as they land:
   `go test ./carriage/ -run TestCarriageMP4FixtureRoundTrip -update`;
 - `av01-clean.mp4` and `av01-clean-hierarchical.mp4` — real av01 fragmented mp4s without
   captions, the injection targets for AV1 CTA-608 carriage (#49, see below);
+- `bframes-avc.mp4` and `bframes-hevc.mp4` — real reordered AVC/HEVC, the fixtures that
+  keep the presentation-order caption assignment honest (#54, see below);
 - sample `.scc` files, both `;` (drop-frame) and `:` variants (#19);
 - sample `.vtt` and `.srt` files (#21, #22).
 
@@ -114,3 +116,58 @@ injected in decode order — see the composition-order issue (#54). That affects
 HEVC** identically; the av01 fixtures above are unaffected, since their composition offsets
 are all 0. Note that `-preset ultrafast` disables B-frames in x264 but not in x265, so it is
 an easy way to reproduce nothing when trying to trigger this.
+
+## B-frame fixtures (#54)
+
+`bframes-avc.mp4` and `bframes-hevc.mp4` exist because the composition-order bug was
+invisible against every fixture that came before them: `carriage-608-avc.mp4` has no
+composition offsets and starts at `pts=0`, and the av01 fixtures reorder inside the
+bitstream rather than in the container. Both properties these fixtures add are
+load-bearing — **non-zero composition offsets** exercise the ordering rule, and
+**`start_pts=1024`** exercises the timing origin.
+
+Both are 128x72, 30 fps, 30 frames, one fragment, `-bf 3`. Regenerate with the full
+ffmpeg (8.1.2) at `/opt/homebrew/bin/ffmpeg`, which has libx264/libx265 (the PATH ffmpeg
+does not); `+bitexact` makes them byte-reproducible.
+
+```sh
+ffmpeg -y -fflags +bitexact -f lavfi -i "testsrc2=size=128x72:rate=30" -frames:v 30 \
+  -c:v libx264 -preset veryfast -crf 45 -pix_fmt yuv420p -g 30 -bf 3 \
+  -flags:v +bitexact -map_metadata -1 \
+  -movflags +frag_keyframe+empty_moov+default_base_moof+skip_trailer \
+  testdata/bframes-avc.mp4
+
+# bframes-hevc.mp4 — the same, with:
+#   -c:v libx265 -x265-params "log-level=none:bframes=3"
+```
+
+**Gotcha:** `-preset ultrafast` disables B-frames in x264 but *not* in x265, so it is an
+easy way to reproduce nothing. Use `veryfast` plus an explicit `-bf 3`. Verify the
+reordering survived with:
+
+```sh
+ffprobe -v error -select_streams v:0 -show_entries packet=pts,dts -of csv=p=0 FILE
+```
+
+Both files come out with the same pattern — `1024,0` / `3072,512` / `2048,1024` / … — so
+presentation order genuinely differs from decode order.
+
+### What they demonstrate
+
+Injecting `srt/basic.srt` into a 10 s clip built the same way and reading it back with
+ffmpeg as an independent decoder shows the bug and the fix directly:
+
+```sh
+go608-inject -i bf.mp4 -sub testdata/srt/basic.srt -o bf-608.mp4 -fps 30
+ffmpeg -f lavfi -i "movie=bf-608.mp4[out0+subcc]" -map 0:1 out.srt
+```
+
+| | field 1 as ffmpeg reads it |
+|---|---|
+| decode-order assignment (before) | `llHeo, ldor! w` |
+| presentation-order assignment (after) | `Hello, world!` |
+
+Measured identically on AVC and HEVC. The internal round-trip was green throughout,
+because the read side made the same mistake as the write side — which is why the
+regression test asserts against the *presentation* index rather than against a
+round-trip.
