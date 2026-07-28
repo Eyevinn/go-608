@@ -2,8 +2,9 @@
 
 **Module:** `github.com/Eyevinn/go-608` · **Status:** design spec, ready for `/implement` · **License:** MIT · **Go:** 1.25
 
-A generic Go library for **CTA-608 / CEA-608** captions: encode + decode, `cc_data` + SEI carriage
-per ATSC A/53 (AVC & HEVC), wall-clock caption generation, and timed-text (SCC / WebVTT / SRT) I/O.
+A generic Go library for **CTA-608 / CEA-608** captions: encode + decode, `cc_data` carriage per
+ATSC A/53 — SEI for AVC & HEVC, a `metadata_itu_t_t35` OBU for AV1 — wall-clock caption generation,
+and timed-text (SCC / WebVTT / SRT) I/O.
 
 This document is the **consolidated, self-contained hand-off** for implementation. It reproduces the
 public API and the normative build requirements in-line; the per-decision **rationale** lives in the
@@ -12,8 +13,9 @@ design notes under [`docs/design/`](docs/design/) and the source research under
 (**MUST / SHOULD / MAY**) follows RFC 2119.
 
 The naming: the modern standard is **CTA-608** (the org renamed from CEA to CTA); the core package is
-`cta608`. The legacy spelling "CEA-608" persists in prior art and in the mp4ff dependency's API
-(`ParseCEA608`, `IsCEA608`) — that spelling is confined to the `carriage` package that wraps mp4ff.
+`cta608`. The legacy spelling "CEA-608" persists in prior art, and used to persist in the mp4ff
+dependency's API; as of mp4ff v0.55.0 that API is `ParseCTA608` / `IsCTA608`, so go-608 uses the
+modern spelling throughout.
 
 ---
 
@@ -22,8 +24,9 @@ The naming: the modern standard is **CTA-608** (the org renamed from CEA to CTA)
 ### 1.1 Goals
 
 - **Encode + decode** CTA-608 caption data, encode-first (authoring → byte pairs is the primary path).
-- **Carriage** of `cc_data()` in AVC/HEVC SEI (`user_data_registered_itu_t_t35` → `GA94` → `cc_data`),
-  reusing `Eyevinn/mp4ff` for the SEI/NAL layer.
+- **Carriage** of `cc_data()` under the same T.35/GA94 payload in every supported codec — a
+  `user_data_registered_itu_t_t35` SEI message for AVC/HEVC, a `metadata_itu_t_t35` OBU for AV1 —
+  reusing `Eyevinn/mp4ff` for the SEI/NAL and OBU layers.
 - **Wall-clock caption generation** — the first milestone, consumed by livesim2 & moqlivemock.
 - **Timed-text I/O** — SCC (byte-exact) and WebVTT/SRT (lossy, via a shared cue model), with a
   published plugin seam for future formats (TTML).
@@ -40,6 +43,9 @@ hands them bytes to insert, it never muxes ([#4](docs/research/consumer-injectio
 - **XDS** (eXtended Data Service, field-2 metadata) — decode skips it, encode never emits it.
 - **Text mode (T1–T4)** — decode recognizes the mode switch but does not model/render it.
 - **Code changes in livesim2 / moqlivemock** — a separate implementation effort.
+- **Scalable AV1** (`OperatingPointIdc != 0`) — see §5.2; a scalable `av01` track is rejected, not
+  captioned. **Non-MP4 AV1 containers** — WebM/Matroska and raw `.obu` / `.ivf` elementary streams;
+  AV1 carriage here means av01-in-MP4.
 
 ---
 
@@ -92,7 +98,7 @@ scc/        SCC (Scenarist) read/write — byte-pair container                de
 cue/        TimedCue + Reader/Writer seam + 608↔cue mapping (Segment/Compile) deps: cta608
 webvtt/     WebVTT serializer  (implements cue.Reader/Writer)               deps: cue, cta608
 srt/        SRT serializer     (implements cue.Reader/Writer)               deps: cue, cta608
-carriage/   cc_data / T.35 / SEI / NAL; Codec enum — wraps mp4ff            deps: cta608, mp4ff
+carriage/   cc_data / T.35; SEI+NAL for AVC/HEVC, metadata OBU for AV1       deps: mp4ff
 schedule/   timed tokens → per-frame {field1,field2,ccCount}                deps: cta608
 generate/   wall-clock Generator                                           deps: cta608, schedule
 cmd/        go608-extract · go608-inject · go608-clock · go608-info
@@ -175,22 +181,48 @@ func DemuxField(fieldBytes []byte, opts ParseOptions) (ch1, ch2 []Token, err err
 func MuxField(ch1, ch2 []Token, opts SerializeOptions) []byte
 ```
 
-### 4.2 `carriage` — SEI/`cc_data` carriage, wraps mp4ff ([#6](docs/design/cea608-carriage-seam.md))
+### 4.2 `carriage` — `cc_data` carriage, wraps mp4ff ([#6](docs/design/cea608-carriage-seam.md))
 
 ```go
 type Codec int
-const ( CodecAVC Codec = iota; CodecHEVC )      // explicit; never sniffed
+const ( CodecAVC Codec = iota; CodecHEVC )      // NAL framing only; explicit, never sniffed
 
+// --- codec-free ---
 // Encode (pure, timing-free; ccCount supplied by schedule). A field pair is 0 or 2 bytes.
 func BuildCCData(field1Pair, field2Pair []byte, ccCount int) []byte
+
+// --- AVC / HEVC: SEI message in a NAL unit ---
 // Wrap cc_data as a T.35/GA94 SEI message (codec-identical for AVC/HEVC; no codec here).
 func SEIMessage(ccData []byte) sei.SEIMessage
 // Serialize one or more SEI messages into a BARE codec NAL (no 4-byte length prefix).
 func NALU(codec Codec, msgs ...sei.SEIMessage) []byte
 func FrameSEINALU(field1Pair, field2Pair []byte, ccCount int, codec Codec) []byte // one-call
-// Decode (thin wrapper over mp4ff sei.ParseCEA608): sample NALUs -> field byte-pair streams.
+// Sample level: split/join the 4-byte-length-prefixed NAL framing, and splice the SEI
+// before the first VCL NAL (appended at the end if the sample has none).
+func SampleNALUs(sample []byte) ([][]byte, error)
+func PrefixNALUs(nalus ...[]byte) []byte
+func IsVCL(nalu []byte, codec Codec) bool
+func SpliceSEIBeforeVCL(sample, seiNALU []byte, codec Codec) ([]byte, error)
+// Decode (thin wrapper over mp4ff sei.ParseCTA608): sample NALUs -> field byte-pair streams.
 func FieldPairs(sampleNALUs [][]byte, codec Codec) (field1, field2 []byte, err error)
+
+// --- AV1: metadata_itu_t_t35 OBU. Parallel surface; none takes a Codec (§5.2, §6) ---
+// Wrap cc_data as a complete metadata OBU (header, obu_size, metadata_type, payload,
+// trailing_bits). Self-framing, so this returns wire bytes rather than a message value.
+func MetadataOBU(ccData []byte) []byte
+func FrameMetadataOBU(field1Pair, field2Pair []byte, ccCount int) []byte  // one-call
+// Sample level: splice before the first OBU_FRAME / OBU_FRAME_HEADER. Errors if the
+// sample has neither — deliberately NO no-anchor fallback (§5.2).
+func SpliceOBUBeforeFrame(sample, obu []byte) ([]byte, error)
+// Decode: takes the raw sample, not a pre-split OBU list.
+func OBUFieldPairs(sample []byte) (field1, field2 []byte, err error)
 ```
+
+`Codec` is **two-valued and stays that way**: it names NAL framing, which AV1 does not have. The AV1
+functions therefore run **parallel** to the SEI ones rather than extending them, and none takes a
+`Codec`. A consumer handling all three codecs MUST own its own three-value discriminator — the point
+being that it fails to compile rather than compiling into a switch that silently captions nothing for
+`av01`. `BuildCCData` and the T.35/GA94 payload are shared by both envelopes unchanged.
 
 ### 4.3 `schedule` — timed tokens → frames ([#7](docs/design/cea608-wallclock-generation.md)/§5.3)
 
@@ -279,19 +311,55 @@ ANSI/CTA-708-E R-2018, ANSI/SCTE 128-1 2020). These are the build contract for `
   `1` ⇒ the two data bytes are valid.
 - **Ordering (MUST):** all 608 constructs (`cc_type` 00/01) appear **first**, before any DTVCC
   constructs. A `cc_valid=0, cc_type=10/11` construct marks the **end of 608 data**.
-- go-608 does **not** need its own `cc_data` **parser** on the decode path — `mp4ff/sei.ParseCEA608`
-  reads exactly this. go-608 owns only the **builder** (`carriage.BuildCCData`).
+- go-608 does **not** need its own `cc_data` **parser** on the decode path — `mp4ff/sei.ParseCTA608`
+  reads exactly this, and is **envelope-free** (it parses the bytes after the 8-byte T.35 header), so
+  the same parser serves the SEI and the OBU path. go-608 owns only the **builder**
+  (`carriage.BuildCCData`), which is likewise codec-free.
 
-### 5.2 SEI carriage — SCTE 128-1 2020
+### 5.2 Carriage envelopes — SEI (SCTE 128-1 2020) and AV1 metadata OBU
 
-- The `cc_data()` MUST ride in an SEI `user_data_registered_itu_t_t35` (payloadType 4) with
-  `country_code=0xB5`, `provider_code=0x0031` (ATSC), `user_identifier="GA94"` (0x47413934),
-  `ATSC1_data` with `user_data_type_code=0x03` → `cc_data()`, trailing `0xFF`. This is exactly
-  `mp4ff/sei.ITUData.IsCEA608()`; go-608 reuses mp4ff for the SEI wrap/unwrap and EBSP
-  emulation-prevention, and prepends the codec NAL header itself (AVC `0x06` / HEVC prefix-SEI 39).
-- The payload is **codec-identical** for AVC and HEVC. **Open (informative):** SCTE 128-1 is the
-  AVC/cable normative home; a precise HEVC carriage citation (A/72 / ATSC-3.0) is needed only if a
-  formal HEVC conformance claim is made.
+**The T.35/GA94 payload is shared by every codec.** The `cc_data()` MUST be carried under
+`country_code=0xB5`, `provider_code=0x0031` (ATSC), `user_identifier="GA94"` (0x47413934),
+`ATSC1_data` with `user_data_type_code=0x03` → `cc_data()`, trailing `0xFF` — exactly
+`mp4ff/sei.ITUData.IsCTA608()`. What varies per codec is only the **envelope** and the **splice**;
+the reusable unit across codecs is the SEI message *payload*, not the message and not the NAL unit
+([#47](docs/research/av1-metadata-obu-608-layout.md)).
+
+**AVC / HEVC — SEI message.** The payload rides in an SEI `user_data_registered_itu_t_t35`
+(payloadType 4). go-608 reuses mp4ff for the SEI wrap/unwrap and EBSP emulation-prevention, and
+prepends the codec NAL header itself (AVC `0x06` / HEVC prefix-SEI 39). The message is
+**codec-identical** for AVC and HEVC. **Open (informative):** SCTE 128-1 is the AVC/cable normative
+home; a precise HEVC carriage citation (A/72 / ATSC-3.0) is needed only if a formal HEVC conformance
+claim is made.
+
+**AV1 — `metadata_itu_t_t35` OBU.** The same payload rides in an `OBU_METADATA` (type 5) with
+`metadata_type = 4` (ITU-T T.35), followed by `trailing_bits` (a single `0x80`). An OBU carries **no
+emulation prevention**, so the payload bytes are written verbatim — the one real encode-side
+difference from SEI. On decode, `cc_data` is bounded by `cc_count`, not by `obu_size`, which makes
+the reader tolerant of the trailing-bits ambiguity. Source:
+[#47](docs/research/av1-metadata-obu-608-layout.md); the envelope itself is mp4ff's
+`av1.CreateCTA608MetadataOBU` / `av1.ExtractCTA608` ([#50](https://github.com/Eyevinn/go-608/issues/50)).
+
+- **Placement (MUST):** the caption OBU goes after any sequence-header OBUs and **immediately before
+  the first `OBU_FRAME` / `OBU_FRAME_HEADER`**. Placement is not normatively fixed for T.35 — the AV1
+  spec's *Metadata ITUT T35 semantics* constrains only the payload bytes — so this is a **choice**,
+  made because it is where *Ordering of OBUs* structurally places metadata, because a metadata OBU's
+  scope starts where it appears and so must precede the frame it decorates, and because it is the
+  structural analog of the SEI rule (after parameter sets, before the first VCL NAL).
+- **Anchor on the frame OBU, not on position-from-start.** The mp4 muxer drops temporal-delimiter
+  OBUs while IVF keeps them, so a position-based rule would mean different bytes in the two
+  containers.
+- **No no-anchor fallback (MUST).** Unlike the SEI splice — which appends when a sample has no VCL
+  NAL — a temporal unit without a frame OBU is malformed, not merely frameless. It MUST be reported
+  as an error.
+- **Assignment: one caption OBU per sample, in sample order.** One sample is one temporal unit, and
+  the AV1 spec's *Ordering of OBUs* requires each temporal unit to have exactly one shown frame.
+  Several frame OBUs in a sample (hidden reference frames) are therefore **not** an ambiguity; only
+  the first is the anchor, and a bare `show_existing_frame` frame header is still an anchor.
+- **Precondition: `OperatingPointIdc == 0` (non-scalable).** The one-shown-frame invariant is a
+  *bitstream* guarantee, but a conditional one: with scalability the spec requires one shown frame
+  *per layer* per temporal unit, and "the caption for this sample" stops naming a single picture. A
+  scalable `av01` track MUST be rejected rather than captioned on a guess (§1.3).
 
 ### 5.3 `cc_count` per frame rate & pair scheduling — CTA-708-E §4.3.6
 
@@ -354,13 +422,40 @@ The integer and fractional members of a family yield the **same** count:
 
 Rationale: [#6](docs/design/cea608-carriage-seam.md); consumer study: [#4](docs/research/consumer-injection-points.md).
 
-**Encode flow:** `cta608.Serialize` → per-field byte pairs → `schedule` picks `ccCount` + per-frame
-pairs → `carriage.BuildCCData(f1,f2,ccCount)` → `carriage.SEIMessage(ccData)` →
-`carriage.NALU(codec, msg)` → **bare NAL** → *consumer* prepends the 4-byte length and splices before
-the first VCL NALU (into a per-emission copy, before CENC).
+**Encode flow (shared prefix):** `cta608.Serialize` → per-field byte pairs → `schedule` picks
+`ccCount` + per-frame pairs → `carriage.BuildCCData(f1,f2,ccCount)` → a `cc_data()` payload. Only
+the envelope and the splice differ from there (§5.2):
 
-**Decode flow:** consumer/mp4ff hands sample NALUs → `carriage.FieldPairs` (reuses
-`sei.ParseCEA608`) → `cta608.Decoder.Feed(field1)` → `Screen`.
+- **AVC / HEVC:** → `carriage.SEIMessage(ccData)` → `carriage.NALU(codec, msg)` → **bare NAL** →
+  `carriage.SpliceSEIBeforeVCL(sample, nalu, codec)`, which adds the 4-byte length prefix and places
+  it before the first VCL NAL (into a per-emission copy, before CENC).
+- **AV1:** → `carriage.MetadataOBU(ccData)` → **complete OBU** → `carriage.SpliceOBUBeforeFrame(sample,
+  obu)`, which places it before the first `OBU_FRAME` / `OBU_FRAME_HEADER`.
+
+**Decode flow:** `carriage.FieldPairs(sampleNALUs, codec)` for AVC/HEVC, `carriage.OBUFieldPairs(sample)`
+for AV1 — both reuse mp4ff's envelope-free `sei.ParseCTA608` under the hood — →
+`cta608.Decoder.Feed(field1)` → `Screen`.
+
+**Frame assignment (MUST): presentation order, from the track origin.** The *k*-th caption payload
+belongs to the *k*-th **displayed** frame — the sample with the *k*-th smallest presentation time —
+not the *k*-th sample in decode order. Media time is measured from the **track origin**, the smallest
+presentation time in the file, so a subtitle file's `t=0` maps to the first displayed frame whatever
+absolute timestamps the container happens to start at. Edit lists are not consulted.
+
+This is one codec-free rule, not a per-codec special case: AVC and HEVC reorder in the *container*
+via composition offsets, AV1 reorders inside the *bitstream* (hidden frames plus
+`show_existing_frame`) and so always has `pts == dts`, which makes the rule a no-op for AV1 rather
+than an exception. Getting it wrong is **not** detectable by a round-trip through go-608's own reader
+— a read side that repeats the write side's mistake agrees with itself while every third-party
+decoder sees permuted text ([#54](https://github.com/Eyevinn/go-608/issues/54)). Samples are still
+*written* in decode order, which the container requires; only the assignment and the timing are in
+presentation order.
+
+**Correctness bar:** carriage changes are held to byte-identity against the previous implementation
+for already-shipping paths, plus verification with an **independent decoder** —
+`ffmpeg -f lavfi -i "movie=FILE.mp4[out0+subcc]"`, which reads AVC, HEVC and AV1 through ffmpeg's own
+A/53 path. A captioned real-world `av01` reference could not be obtained with available tooling
+([#49](https://github.com/Eyevinn/go-608/issues/49)), so for AV1 this is the interop bar.
 
 **Injection points (informative, [#4](docs/research/consumer-injection-points.md)):** both consumers
 own AU assembly and have no 608 code today. livesim2's chunked low-latency path has a per-sample

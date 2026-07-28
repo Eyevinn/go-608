@@ -339,6 +339,13 @@ slice's lines, and returns one `schedule.Frame` per video frame.
 frames, err := generate.BuildUnitCues(fps, unitFrames, unitStartMS, 1000, content)
 ```
 
+**Frame `i` belongs to the sample with the `i`-th smallest presentation time** — the
+`i`-th *displayed* frame of the unit, not the `i`-th sample in decode order. The two
+differ whenever the video reorders in the container (B-frames in AVC/HEVC; AV1 reorders
+inside the bitstream instead, so for it they always coincide). Walking samples in decode
+order scrambles the captions, and reading them back the same way hides it — go-608's own
+tools had exactly this bug.
+
 A pop-on cue is two transmissions — a **build** (RCL + ENM + rows) written into
 non-displayed memory, and an **EOC** that flips it on screen — and both drain at one 608
 pair per frame. Where the build sits therefore decides *when* the caption appears, and
