@@ -115,3 +115,39 @@ func rowsText(s cta608.Screen) string {
 	}
 	return b.String()
 }
+
+// TestCuesFromUnitsExtendedChars guards the conversion path that exposed the
+// incremental-decode bug: CuesFromUnits feeds the decoder one pair per unit to keep
+// per-frame timing, and an extended character's fallback and glyph land in different
+// units. "CAFÉ" used to come out as "CAFEÉ" in every mp4/SCC -> WebVTT conversion of
+// accented text.
+func TestCuesFromUnitsExtendedChars(t *testing.T) {
+	const text = "CAFÉ ÀU LAIT"
+	var enc cta608.Encoder
+	data := cta608.Serialize(enc.Apply(cta608.CaptionBlock{
+		Mode: cta608.PopOn, Anchor: cta608.AnchorBottom,
+		Lines: []cta608.Line{{
+			Align: cta608.AlignLeft,
+			Runs:  []cta608.Run{{Text: text, Pen: cta608.Pen{Color: cta608.White}}},
+		}},
+	}), cta608.SerializeOptions{})
+
+	// One pair per frame at 30 fps, exactly as the mp4 and SCC read paths do.
+	units := make([]DecodeUnit, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		units = append(units, DecodeUnit{
+			TimeMS: int64(i/2) * 1000 / 30,
+			Field1: data[i : i+2],
+		})
+	}
+	cues, err := CuesFromUnits(units, cue.SegmentOptions{DefaultDur: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("CuesFromUnits: %v", err)
+	}
+	if len(cues) == 0 {
+		t.Fatal("no cues decoded")
+	}
+	if got := rowsText(cues[len(cues)-1].Content); got != text {
+		t.Errorf("decoded %q, want %q", got, text)
+	}
+}
