@@ -9,6 +9,29 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `Decoder` fed one byte pair at a time decoded differently from one fed a whole
+  buffer**, corrupting two 608 constructs that straddle a pair boundary. Every timed path
+  feeds pair-by-pair — that is what preserves per-frame timing — so this hit
+  `go608-extract`, `go608-info`, and any consumer decoding an mp4 or SCC frame by frame.
+  `Decoder.Feed` now carries its parse state across calls.
+
+  - **Extended characters lost their backspace-and-replace**, leaving the fallback
+    character behind: `CAFÉ ÀU LAIT` decoded as `CAFEÉ AÀU LAIT`. An extended character is
+    transmitted as a fallback char pair followed by the two-byte extended code, so in the
+    timed path the two always arrive in different `Feed` calls and the backspace had
+    nothing pending to remove. It now emits an explicit `BS`, which is what CTA-608-E
+    describes on the wire anyway. **Affects every caption mode, pop-on included** — any
+    accented letter, curly quote, `©`, `•` or `«»` in an mp4/SCC → WebVTT/SRT conversion.
+  - **Doubled control codes were not collapsed across the boundary.** Harmless for pop-on,
+    where a second `EOC`/`EDM`/`ENM` is idempotent, but a doubled roll-up `CR` scrolled the
+    window **twice** and dropped a line: a 3-row roll-up decoded as
+    `r13="BBB"`, `r14=""`, `r15="CCC"` instead of `AAA`/`BBB`/`CCC`.
+
+  `Parse` is unchanged — it still starts from a fresh state, so whole-buffer parsing and
+  `Parse`-then-`Push` callers behave exactly as before.
+
 ## [0.7.0] - 2026-07-28
 
 ### Added

@@ -167,12 +167,11 @@ type DecodeUnit struct {
 // samples the Screen whenever cta608.Decoder.Changed reports a boundary, tagging
 // the cut with that unit's time.
 //
-// Feeding pair-by-pair keeps per-frame timing, which is exactly right for pop-on
-// captions: doubled control codes (EOC/EDM/ENM) are idempotent on the displayed
-// Screen, so a doubled control simply reports no second change. (Roll-up CR is the
-// one control that is not idempotent under doubling; a roll-up SCC that doubles CR
-// would over-scroll. go-608's own encode paths are pop-on, so this does not affect
-// the round-trip.)
+// Feeding pair-by-pair keeps per-frame timing. cta608.Decoder carries its parse state
+// across Feed calls, so this decodes identically to feeding the whole stream at once —
+// which matters for the two constructs that straddle a pair boundary: a doubled control
+// code (a doubled roll-up CR must scroll once, not twice) and an extended character,
+// whose fallback and glyph are always in different units here.
 func CuesFromUnits(units []DecodeUnit, opts cue.SegmentOptions) ([]cue.TimedCue, error) {
 	var dec cta608.Decoder
 	var changes []cue.TimedScreen

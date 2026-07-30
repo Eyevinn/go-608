@@ -37,7 +37,17 @@ func (e *ParseError) Error() string {
 // 2N-1 copies. Character-carrying pairs (special and extended glyphs) are never
 // treated as doubled control codes, so repeated glyphs like "♪♪" survive.
 func Parse(data []byte, opts ParseOptions) ([]Token, error) {
-	p := parser{}
+	var p parser
+	return p.parse(data, opts)
+}
+
+// parse decodes one chunk of byte pairs, carrying p's cross-chunk state over from
+// the previous call. Parse starts from a zero parser, so a whole-buffer parse is
+// unaffected; Decoder keeps one parser for its whole lifetime, because it is fed
+// incrementally — one pair per video frame — and 608 constructs routinely straddle
+// that boundary (a doubled control code, an extended character and its fallback).
+func (p *parser) parse(data []byte, opts ParseOptions) ([]Token, error) {
+	p.tokens = nil
 	for i := 0; i < len(data); i += 2 {
 		r0 := data[i]
 		var r1 byte
@@ -112,9 +122,20 @@ func (p *parser) control(c0, c1 byte) {
 		return
 	}
 	if (c0n == 0x12 || c0n == 0x13) && c1 >= 0x20 && c1 <= 0x3f {
-		// extended char: backspace over the fallback, then append the glyph
+		// Extended char: backspace over the fallback the sender transmitted ahead of
+		// the glyph, then append the glyph.
+		//
+		// The fallback is usually still pending in the current run, and dropping it
+		// there is enough. When it is not — because the two pairs arrived in separate
+		// parse calls, which in the timed path is always, one pair per frame — it has
+		// already been emitted and displayed, so the receiver has to be told to
+		// backspace over it. That is exactly CTA-608-E's backspace-and-replace on the
+		// wire, so emitting the BS is the faithful reading rather than a workaround.
 		if len(p.run) > 0 {
 			p.run = p.run[:len(p.run)-1]
+		} else {
+			p.flushRun()
+			p.tokens = append(p.tokens, Command{Op: BS})
 		}
 		if c0n == 0x12 {
 			p.appendInternal(c1 + 0x70) // extended set A

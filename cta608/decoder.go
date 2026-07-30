@@ -29,6 +29,10 @@ type Decoder struct {
 	textMode bool // TR/RTD entered: caption writes are ignored until a mode command
 
 	notified Screen // displayed snapshot as of the last Changed call
+
+	// parser carries parse state across Feed calls, so an incrementally fed stream
+	// decodes the same as a whole-buffer one. See Feed.
+	parser parser
 }
 
 // dcell is one character cell: a rune with its Pen. set distinguishes a written
@@ -64,8 +68,15 @@ type dcursor struct {
 // Feed parses cc_data byte pairs (a single channel's stream) into tokens and
 // interprets them, advancing the displayed Screen. Parity is stripped; use Push
 // after Parse with ParseOptions if strict parity validation is wanted.
+//
+// Successive calls form one continuous stream: Feed keeps its parse state across
+// calls, so feeding a caption one pair per video frame — which is what preserves
+// per-frame timing — decodes identically to feeding the whole buffer at once. Two
+// 608 constructs straddle a pair boundary and need that continuity: a doubled
+// control code (collapsed to one logical token, so a doubled roll-up CR scrolls
+// once rather than twice) and an extended character with its preceding fallback.
 func (d *Decoder) Feed(data []byte) error {
-	toks, err := Parse(data, ParseOptions{})
+	toks, err := d.parser.parse(data, ParseOptions{})
 	if err != nil {
 		return err
 	}
