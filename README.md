@@ -357,9 +357,31 @@ stateless server generating segments on demand needs. It splits the unit into
 `N = NumCues(unitDurMS, targetPeriodMS)` equal cue slices, asks a `CueContentFunc` for each
 slice's lines, and returns one `schedule.Frame` per video frame.
 
+A unit is described by a `Unit`, whose three fields are **independent inputs**:
+
 ```go
-frames, err := generate.BuildUnitCues(fps, unitFrames, unitStartMS, 1000, content)
+type Unit struct {
+    Nr      int64 // unit/segment/group number, as you number them
+    StartMS int64 // wall-clock time of the unit's first frame
+    Frames  int   // video frames in the unit
+}
+
+frames, err := generate.BuildUnitCues(fps, generate.Unit{Nr: 42, StartMS: 84_000, Frames: 60},
+    1000, content)
 ```
+
+A unit's start is **not** assumed to be `Nr × duration`. Segment durations vary (a `$Time$`
+timeline), timelines contain gaps, and a numbering epoch need not begin at `t=0`, so nothing
+derives one field from the other: `StartMS` is the only thing timing is measured from, and
+`Nr` is passed through to your `CueContentFunc` untouched.
+
+```go
+type CueContentFunc func(u generate.Unit, cueIdx int, cueStartMS int64) generate.UnitCue
+```
+
+Because the unit arrives as an argument rather than being closed over, **one**
+`CueContentFunc` serves every unit — including the next unit's first cue under
+`WithFlipAtCueStart` below.
 
 **Frame `i` belongs to the sample with the `i`-th smallest presentation time** — the
 `i`-th *displayed* frame of the unit, not the `i`-th sample in decode order. The two
@@ -386,14 +408,20 @@ refers to its own display interval — a clock, a segment or group number — si
 default placement such a caption is always seen late.
 
 ```go
-frames, err := generate.BuildUnitCues(fps, unitFrames, unitStartMS, 1000, content,
-    generate.WithFlipAtCueStart(nextContent))
+frames, err := generate.BuildUnitCues(fps, unitA, 1000, content,
+    generate.WithFlipAtCueStart(unitB, content))
 ```
 
 The build for a cue then lives in the frames preceding its flip, which for a unit's first
-cue means the **previous unit**. `next` supplies the following unit's first cue so this
-unit's tail can carry its build; it is called once as `next(0, unitStartMS+unitDurMS)`, and
-`nil` leaves the tail empty. Consecutive units are still generated independently — a unit's
+cue means the **previous unit**. So `WithFlipAtCueStart` names the following unit outright,
+and this unit's tail carries the build for that unit's first cue — resolved as
+`content(unitB, 0, unitB.StartMS)`. Only `Nr` and `StartMS` are read; pass a `nil` content
+to leave the tail empty.
+
+`unitB.StartMS` is taken as given, **not** computed as unit A's end, so a gap between units
+or a change of duration needs no special case — say where the next unit actually starts. It
+must be the same `Unit` (and content function) the next `BuildUnitCues` call receives, since
+the build placed in A's tail has to match the flip B emits. Consecutive units are still generated independently — a unit's
 first cue is always encoded from a clean encoder state, so the build one unit places in its
 tail matches the flip the next unit emits. On the wire, at 30 fps with ~1 s cues:
 
