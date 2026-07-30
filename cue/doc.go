@@ -17,7 +17,14 @@
 // screen is a gap, and a caption still shown at end-of-stream takes a
 // configurable end (SegmentOptions.StreamEnd, else Start + DefaultDur). Pop-on
 // yields one cue per caption, roll-up one cue per scroll step (visible lines
-// repeat), paint-on a cue per in-place change.
+// repeat), paint-on one cue per write burst.
+//
+// Pop-on gets that for free: it builds into non-displayed memory, so its display
+// changes once, at the EOC. Roll-up and paint-on write straight to the displayed
+// screen, so every byte pair changes it and the boundary has to be chosen —
+// SegmentOptions.Coalesce does that, defaulting to cutting only at structural
+// events (a scroll, an erase, a jump to another row) rather than on every two
+// characters. CoalesceNone keeps the per-change rendering.
 //
 // Compile implements text->608: pop-on only. Overlapping cues are merged by
 // position at each boundary (the union of active cues' Screens; a later cue wins

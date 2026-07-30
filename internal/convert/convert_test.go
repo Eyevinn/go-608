@@ -245,3 +245,61 @@ func TestSCCTextSCCRoundTripByteExact(t *testing.T) {
 		}
 	}
 }
+
+// TestCuesFromUnitsCoalescesRollUp checks the mode reaches cue.Segment. Roll-up
+// writes straight to the displayed screen, so without the mode every byte pair would
+// cut a cue and an 11-character line would arrive as six of them.
+func TestCuesFromUnitsCoalescesRollUp(t *testing.T) {
+	var enc cta608.Encoder
+	enc.SetMode(cta608.RollUp, 3)
+	var data []byte
+	for _, w := range [][]string{{"HELLO THERE"}, {"HELLO THERE", "SECOND LINE"}} {
+		var lines []cta608.Line
+		base := 15 - len(w) + 1
+		for j, txt := range w {
+			lines = append(lines, cta608.Line{
+				Row: base + j, Align: cta608.AlignLeft,
+				Runs: []cta608.Run{{Text: txt, Pen: cta608.Pen{Color: cta608.White}}},
+			})
+		}
+		data = append(data, cta608.Serialize(enc.Apply(cta608.CaptionBlock{
+			Mode: cta608.RollUp, RollUpRows: 3, Lines: lines,
+		}), cta608.SerializeOptions{})...)
+	}
+
+	units := make([]DecodeUnit, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		units = append(units, DecodeUnit{TimeMS: int64(i/2) * 1000 / 30, Field1: data[i : i+2]})
+	}
+
+	coalesced, err := CuesFromUnits(units, cue.SegmentOptions{DefaultDur: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("CuesFromUnits: %v", err)
+	}
+	if len(coalesced) != 2 {
+		t.Errorf("got %d cues, want 2 (one per scroll step): %v", len(coalesced), cueTexts(coalesced))
+	}
+	if got := rowsText(coalesced[0].Content); got != "HELLO THERE" {
+		t.Errorf("cue 0 = %q, want the completed line %q", got, "HELLO THERE")
+	}
+
+	perChange, err := CuesFromUnits(units, cue.SegmentOptions{
+		DefaultDur: 2 * time.Second, Coalesce: cue.CoalesceNone,
+	})
+	if err != nil {
+		t.Fatalf("CuesFromUnits (CoalesceNone): %v", err)
+	}
+	if len(perChange) <= len(coalesced) {
+		t.Errorf("CoalesceNone gave %d cues, want more than the coalesced %d",
+			len(perChange), len(coalesced))
+	}
+}
+
+// cueTexts renders a cue list's text for failure messages.
+func cueTexts(cues []cue.TimedCue) []string {
+	out := make([]string, 0, len(cues))
+	for _, c := range cues {
+		out = append(out, rowsText(c.Content))
+	}
+	return out
+}

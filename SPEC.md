@@ -525,8 +525,22 @@ WebVTT & SRT are **thin serializers** over `cue.TimedCue` (whose `Content` is a 
 SCC/SEI containers.
 
 - **608→text:** unified **screen-change segmentation** — a displayed-`Screen` change closes the
-  current cue and opens a new one (empty screen = gap). Roll-up → one cue per scroll step (visible
-  lines repeat); dangling end-of-stream cue gets a configurable end.
+  current cue and opens a new one (empty screen = gap); dangling end-of-stream cue gets a
+  configurable end.
+- **Direct-write modes need a coalescing rule (MUST).** Pop-on builds into non-displayed memory, so
+  its display changes once per caption. Roll-up and paint-on write straight to the *displayed*
+  screen, so a bare screen-change rule cuts a cue every byte pair — up to two characters — giving 14
+  one-frame cues for two roll-up lines. `cue.SegmentOptions.Coalesce` selects the boundary:
+  `CoalesceStructural` (default) cuts only at a scroll, an erase, a jump to another row or an
+  overwrite, so roll-up yields **one cue per scroll step** and paint-on **one per write burst**;
+  `CoalesceNone` is the faithful per-change rendering, and the only mode needing no lookahead.
+  A period's cue starts at its **first** change and carries the screen as of its **last**, so the
+  completed caption is displayed from when its first characters appeared — timestamping at
+  completion instead would leave the typing interval in a gap.
+- **Coalescing is gated on the caption mode**, which `cue.TimedScreen.Mode` carries from
+  `cta608.Decoder.Mode`. By screen alone a pop-on caption replaced by a longer one is
+  indistinguishable from a line being typed, so without the mode the rule would silently merge two
+  distinct captions. The zero value is pop-on, which never coalesces.
 - **text→608:** **pop-on only** (roll-up authoring out of scope). Overlapping cues are **merged by
   position** at each boundary (union of active cues' Screens; later cue wins same-row conflicts) →
   the core `diff` engine re-flips the pop-on caption.

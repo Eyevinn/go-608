@@ -191,6 +191,10 @@ func CuesFromUnits(units []DecodeUnit, opts cue.SegmentOptions) ([]cue.TimedCue,
 			changes = append(changes, cue.TimedScreen{
 				Time:   time.Duration(u.TimeMS) * time.Millisecond,
 				Screen: dec.Screen(),
+				// The mode lets Segment coalesce roll-up and paint-on, which change
+				// the displayed screen on every byte pair, without merging distinct
+				// pop-on captions.
+				Mode: dec.Mode(),
 			})
 		}
 	}

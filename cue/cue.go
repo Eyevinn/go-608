@@ -64,6 +64,13 @@ type TimedScreen struct {
 	// Screen is the displayed caption at Time; an empty Screen (no rows) marks
 	// an erase (a gap, no caption on screen).
 	Screen cta608.Screen
+	// Mode is the caption mode in force when the screen changed, from
+	// cta608.Decoder.Mode. Segment needs it to coalesce the direct-write modes
+	// without merging distinct pop-on captions: in roll-up and paint-on every byte
+	// pair changes the displayed screen, whereas a pop-on caption changes it once,
+	// at its EOC. The zero value is cta608.PopOn, which never coalesces — so a
+	// producer that does not set it keeps the one-cue-per-change behaviour.
+	Mode cta608.Mode
 }
 
 // TimedTokens is a wall-time-tagged batch of token transitions — the output
