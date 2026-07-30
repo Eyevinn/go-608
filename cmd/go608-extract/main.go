@@ -63,6 +63,7 @@ type options struct {
 	streamEnd  time.Duration
 	defaultDur time.Duration
 	noPreroll  bool
+	perChange  bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -83,6 +84,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&opts.noPreroll, "no-preroll", false,
 		"when writing SCC from timed text, start each pop-on build at its cue time instead of\n"+
 			"ahead of it, so the caption appears ~0.2-0.5s late (the pre-v0.8.0 timing)")
+	fs.BoolVar(&opts.perChange, "per-change", false,
+		"for roll-up/paint-on input, emit one cue per displayed-screen change instead of one per\n"+
+			"scroll step -- faithful to what a viewer sees, but roughly one cue per two characters")
 	fs.DurationVar(&opts.streamEnd, "stream-end", 0, "absolute end time for a dangling final cue (e.g. 30s)")
 	fs.DurationVar(&opts.defaultDur, "default-dur", 2*time.Second, "fallback duration for a dangling final cue")
 	err := fs.Parse(args[1:])
@@ -122,10 +126,18 @@ func run(args []string, w io.Writer) error {
 	if opts.noPreroll {
 		flipTiming = schedule.FlipAfterBuild
 	}
+	// Roll-up and paint-on write straight to the displayed screen, so by default a
+	// cue spans one scroll step or write burst rather than one byte pair.
+	coalesce := cue.CoalesceStructural
+	if opts.perChange {
+		coalesce = cue.CoalesceNone
+	}
 	convOpts := convert.Options{
-		FPS:        opts.fps,
-		DropFrame:  opts.drop,
-		Segment:    cue.SegmentOptions{StreamEnd: opts.streamEnd, DefaultDur: opts.defaultDur},
+		FPS:       opts.fps,
+		DropFrame: opts.drop,
+		Segment: cue.SegmentOptions{
+			StreamEnd: opts.streamEnd, DefaultDur: opts.defaultDur, Coalesce: coalesce,
+		},
 		FlipTiming: flipTiming,
 	}
 

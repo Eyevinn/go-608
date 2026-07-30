@@ -91,6 +91,20 @@ func (d *Decoder) Push(tokens []Token) {
 	}
 }
 
+// Mode reports the caption mode the decoder is currently in, as last set by a
+// SetMode token (the zero value, PopOn, until one arrives).
+//
+// It matters to a consumer segmenting the decoded stream into timed text, because
+// the modes differ in *where* text is written: pop-on builds into non-displayed
+// memory and becomes visible in one step at its EOC, while roll-up and paint-on
+// write straight to the displayed screen, so every byte pair changes it. Two
+// consecutive displayed screens are otherwise indistinguishable — a pop-on caption
+// replaced by a longer one looks exactly like a paint-on line being typed — so the
+// mode is what tells them apart.
+func (d *Decoder) Mode() Mode {
+	return d.mode
+}
+
 // Screen returns a copy of the current displayed rows (sparse, Displayed=true).
 func (d *Decoder) Screen() Screen {
 	return screenFromLineMap(d.displayed)

@@ -13,7 +13,12 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 - `schedule.FlipTiming` (`FlipOnTime`, `FlipAfterBuild`) and `schedule.WithFlipTiming`, plus
   `convert.Options.FlipTiming` internally, and a `-no-preroll` flag on `go608-inject` and
-  `go608-extract`. See the Fixed entry above.
+  `go608-extract`. See the Fixed entry below.
+
+- `cue.Coalesce` (`CoalesceStructural`, `CoalesceNone`) and `cue.SegmentOptions.Coalesce`;
+  `cue.TimedScreen.Mode`; `cta608.Decoder.Mode()`; and a `-per-change` flag on
+  `go608-extract`. See the Fixed entry below.
+
 
 ### Changed
 
@@ -66,6 +71,35 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   empty". `NumCues` and `UnitCue` are unchanged.
 
 ### Fixed
+
+- **Roll-up and paint-on produced one WebVTT/SRT cue per byte pair** — roughly one cue per
+  two characters, each lasting a single frame. Both modes write straight to the *displayed*
+  screen, so every pair changed it and `cue.Segment` cut a cue. Measured on the same text:
+
+  | mode | before | after |
+  |---|---|---|
+  | pop-on | 1 cue | 1 cue |
+  | paint-on ("HELLO THERE") | 6 cues | **1 cue** |
+  | roll-up (2 lines) | 14 cues | **2 cues** |
+
+  `cue.SegmentOptions.Coalesce` now defaults to `CoalesceStructural`, which cuts only at a
+  structural event — a scroll, an erase, a jump to another row, an overwrite — and not while
+  text is merely being added to a row. Roll-up therefore yields one cue per scroll step and
+  paint-on one per write burst, which is what `SPEC.md` §8.2, `cue/doc.go` and
+  `cue/segment.go` had all promised. `CoalesceNone` (`go608-extract -per-change`) keeps the
+  per-change rendering: faithful to what a viewer sees, and the only mode that needs no
+  lookahead.
+
+  A period's cue starts at its **first** change and carries the screen as of its **last**, so
+  the completed caption is displayed from the moment its first characters appeared. Stamping
+  it at completion instead would leave the typing interval in a gap.
+
+  Coalescing is gated on the caption mode, newly carried by `cue.TimedScreen.Mode` from
+  `cta608.Decoder.Mode()`. By screen alone, a pop-on caption replaced by a longer one is
+  indistinguishable from a line being typed, so without the mode the rule would merge two
+  distinct captions. `TimedScreen.Mode`'s zero value is pop-on, which never coalesces, so a
+  producer that does not set it keeps the previous behaviour.
+
 
 - **Captions appeared 0.2–0.5 s later than their cue said.** A pop-on caption is two
   transmissions — a build into non-displayed memory, then the `EOC` that flips it on screen
