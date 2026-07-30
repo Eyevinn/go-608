@@ -9,6 +9,8 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-30
+
 ### Added
 
 - `schedule.FlipTiming` (`FlipOnTime`, `FlipAfterBuild`) and `schedule.WithFlipTiming`, plus
@@ -341,7 +343,8 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   `go608-info`) and extends `internal/mp4io` with a reusable `SpliceFragmented`
   fragment rewriter (also adopted by `go608-clock`) and a `Samples` flattener.
 
-[Unreleased]: https://github.com/Eyevinn/go-608/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/go-608/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.5.0
