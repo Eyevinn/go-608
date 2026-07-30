@@ -58,15 +58,16 @@ Usage of %s:
 `
 
 type options struct {
-	version bool
-	input   string
-	sub     string
-	output  string
-	from    string
-	to      string
-	fps     float64
-	ccCount string
-	drop    bool
+	version   bool
+	input     string
+	sub       string
+	output    string
+	from      string
+	to        string
+	fps       float64
+	ccCount   string
+	drop      bool
+	noPreroll bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -77,6 +78,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	}
 	opts := options{}
 	fs.BoolVar(&opts.version, "version", false, "print version and exit")
+	fs.BoolVar(&opts.noPreroll, "no-preroll", false,
+		"transmit each caption's pop-on build starting at its cue time instead of ahead of it,\n"+
+			"so the caption appears ~0.2-0.5s late (the pre-v0.8.0 timing)")
 	fs.StringVar(&opts.input, "i", "", "input fragmented mp4 to inject into (omit for format-only conversion)")
 	fs.StringVar(&opts.sub, "sub", "", "subtitle input: a WebVTT, SRT, or SCC file")
 	fs.StringVar(&opts.output, "o", "", "output path (an mp4 when injecting, else a timed-text file)")
@@ -126,7 +130,15 @@ func run(args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	convOpts := convert.Options{FPS: opts.fps, DropFrame: opts.drop, CCCount: policy}
+	// -no-preroll restores the pre-v0.8.0 timing, where a cue's start is when its
+	// pop-on build begins rather than when the caption becomes visible.
+	flipTiming := schedule.FlipOnTime
+	if opts.noPreroll {
+		flipTiming = schedule.FlipAfterBuild
+	}
+	convOpts := convert.Options{
+		FPS: opts.fps, DropFrame: opts.drop, CCCount: policy, FlipTiming: flipTiming,
+	}
 
 	if opts.input == "" {
 		return convertOnly(subFormat, opts, convOpts, w)
@@ -176,7 +188,7 @@ func injectMP4(
 
 	var ccFor mp4io.CCDataFunc
 	if subFormat == convert.FormatSCC {
-		ccFor, err = sccCCDataFunc(opts.sub, opts.fps, policy)
+		ccFor, err = sccCCDataFunc(opts.sub, opts.fps, policy, convOpts.FlipTiming)
 	} else {
 		ccFor, err = subtitleCCDataFunc(subFormat, opts, convOpts, track)
 	}
@@ -199,7 +211,9 @@ func injectMP4(
 // n rides on the n-th displayed frame's field 1. The scheduler is used only to size
 // the per-frame cc_count (nothing is queued on it), so the pairs themselves are
 // untouched and survive the round-trip byte-exact.
-func sccCCDataFunc(path string, fps float64, policy schedule.CCCountPolicy) (mp4io.CCDataFunc, error) {
+func sccCCDataFunc(
+	path string, fps float64, policy schedule.CCCountPolicy, flipTiming schedule.FlipTiming,
+) (mp4io.CCDataFunc, error) {
 	r, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
@@ -214,7 +228,8 @@ func sccCCDataFunc(path string, fps float64, policy schedule.CCCountPolicy) (mp4
 		byFrame[p.Frame] = p.Pair
 	}
 
-	sched := schedule.NewScheduler(fps, schedule.WithCCCountPolicy(policy))
+	sched := schedule.NewScheduler(fps, schedule.WithCCCountPolicy(policy),
+		schedule.WithFlipTiming(flipTiming))
 	return func(info mp4io.SampleInfo) ([]byte, error) {
 		// Frame with an empty queue yields this frame's cc_count and an empty pair;
 		// substitute the SCC pair for this frame (or nothing) as field 1.
@@ -239,7 +254,8 @@ func subtitleCCDataFunc(
 		return nil, err
 	}
 
-	sched := schedule.NewScheduler(opts.fps, schedule.WithCCCountPolicy(convOpts.CCCount))
+	sched := schedule.NewScheduler(opts.fps, schedule.WithCCCountPolicy(convOpts.CCCount),
+		schedule.WithFlipTiming(convOpts.FlipTiming))
 	for _, tt := range cue.Compile(cues) {
 		sched.Push(schedule.TimedTokens{TimeMS: tt.Time.Milliseconds(), Field: 1, Tokens: tt.Tokens})
 	}

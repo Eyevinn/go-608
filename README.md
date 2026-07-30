@@ -277,6 +277,28 @@ the resulting 2-byte pairs; `Frame(frameWallMS)` drains **at most one pair per
 field per frame** and reports the frame's `cc_count`, returning the primitive
 `{Field1, Field2, CCCount}` triple `carriage` consumes.
 
+**Flip timing.** A pop-on caption is two transmissions — a build into non-displayed
+memory, then the `EOC` that flips it on screen — and both drain at one byte pair per
+frame, so the build takes real time (~18 pairs, 0.6 s at 30 fps, for two lines). What a
+pushed batch's `TimeMS` means is therefore a choice:
+
+```go
+sched := schedule.NewScheduler(fps)                                    // FlipOnTime (default)
+sched = schedule.NewScheduler(fps, schedule.WithFlipTiming(schedule.FlipAfterBuild))
+```
+
+- **`FlipOnTime` (default)** — `TimeMS` is when the caption becomes **visible**. The
+  build is backdated so its `EOC` lands exactly on `TimeMS`. This is what a subtitle
+  cue's start or a clock's second boundary actually means.
+- **`FlipAfterBuild`** — `TimeMS` is when transmission **starts**, so the caption
+  appears a build later: measured **0.37–0.43 s late at 30 fps**, halving at 60 fps.
+  The only behaviour before v0.8.0; `go608-inject -no-preroll` selects it.
+
+A batch that does not end in an `EOC` — a bare `EDM` clear, a roll-up `CR` — *is* the
+visible change and is never backdated. Nothing is dropped if a backdated build reaches
+past the preceding batch: the queue drains in order, so a crowded build starts as soon
+as the earlier pairs are done and its flip is merely late.
+
 ```go
 s := schedule.NewScheduler(30) // 30 fps → cc_count 20
 s.Push(schedule.TimedTokens{TimeMS: 0, Tokens: tokens})
@@ -495,6 +517,14 @@ webvtt.Write(w, cues)      // []cue.TimedCue -> WEBVTT text (implements cue.Writ
 - **Positioning** (design note W6). `line:` ⇄ `Row.Index` (1–15) and
   `position:`/`align:` ⇄ the leftmost `Run.Column`/indent, quantized to the grid so
   the round-trip is **approximate**. A position-less cue anchors **bottom-center**.
+- **Timing is exact, not quantized-approximate** — it is the styling and positioning
+  that are lossy. A cue's start survives a WebVTT → 608 → WebVTT round-trip to the
+  frame, because the pop-on build is pre-rolled so the `EOC` lands on the cue boundary
+  (see [Scheduling](#scheduling-timed-tokens--frames)); ends are exact because the
+  clearing `EDM` *is* the visible change. Measured on a 30 fps round-trip:
+  `1.000/3.000/5.000 → 1.000/3.000/5.000`, back-to-back cues included, and stable
+  across repeated conversions. With `-no-preroll` the same input returns
+  `1.433/3.467/5.367` and drifts further on each pass.
 
 Sample fixtures live in [`testdata/webvtt/`](testdata/webvtt/) and runnable
 `.vtt` ↔ cue snippets in [`examples/`](examples/).

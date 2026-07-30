@@ -28,6 +28,23 @@
 // kept distinct from the 2-byte 608 null pair (0x80 0x80) and from carriage's
 // DTVCC padding.
 //
+// # Flip timing
+//
+// A pop-on caption is two transmissions — a build into non-displayed memory, then the
+// EOC that flips it on screen — and both drain at one pair per frame, so the build
+// occupies real time (~18 pairs, 0.6 s at 30 fps, for two lines). FlipTiming decides
+// what a pushed batch's TimeMS therefore means. The default FlipOnTime treats it as
+// the instant the caption becomes *visible*, backdating the build so its EOC lands on
+// TimeMS; FlipAfterBuild treats it as the instant transmission *starts*, so the flip
+// arrives a build later. FlipOnTime is the default because a caption's timestamp
+// almost always means "show it now" — a subtitle cue's start, a clock's second
+// boundary. A batch that does not end in an EOC (a bare EDM clear, a roll-up CR) is
+// itself the visible change and is never backdated.
+//
+// Nothing is dropped when a backdated build reaches past the preceding batch: the
+// queue drains in order with head-of-line blocking, so a crowded build starts as soon
+// as the earlier pairs are done and its flip is merely late.
+//
 // # cc_count
 //
 // cc_count = round(600/fps) (CTA-708-E §4.3.6): 23.976/24→25, 25→24, 29.97/30→20,

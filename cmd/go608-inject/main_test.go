@@ -95,11 +95,14 @@ func TestInjectSubtitleRoundTrip(t *testing.T) {
 	if !cuesContain(cues, "HELLO WORLD") {
 		t.Fatalf("injected caption not recovered; cues=%v", cueTexts(cues))
 	}
-	// The caption should sit near its 1s window (allowing quantization slack).
+	// The caption must become visible on the cue's own start frame, not part-way into
+	// it: the pop-on build is pre-rolled ahead of the boundary (schedule.FlipOnTime).
+	// Only frame quantization remains, so one frame at 30 fps is the whole tolerance.
+	const oneFrame = time.Second / 30
 	for _, c := range cues {
 		if strings.Contains(screenText(c), "HELLO") {
-			if c.Start < 500*time.Millisecond || c.Start > 1500*time.Millisecond {
-				t.Errorf("caption start %v, want ~1s", c.Start)
+			if c.Start < time.Second-oneFrame || c.Start > time.Second+oneFrame {
+				t.Errorf("caption start %v, want 1s +/- one frame", c.Start)
 			}
 		}
 	}

@@ -89,6 +89,11 @@ type Options struct {
 	// CCCount is the cc_count policy for the schedule step of the SCC write path
 	// (it does not affect the extracted pair bytes, only would-be cc_data padding).
 	CCCount schedule.CCCountPolicy
+	// FlipTiming decides whether a cue's Start is when its caption becomes visible
+	// (schedule.FlipOnTime, the zero value and default) or when its transmission
+	// begins (schedule.FlipAfterBuild, the pre-v0.8.0 behaviour). It shapes the
+	// text -> SCC write path, whose timecodes are otherwise ~0.2-0.5 s late.
+	FlipTiming schedule.FlipTiming
 }
 
 // ReadCues reads a timed-text document of format f into the shared cue list.
@@ -211,7 +216,8 @@ func unitsFromPairs(pairs []scc.TimedPair, fps float64) []DecodeUnit {
 // pairs into SCC entries.
 func sccEntriesFromCues(cues []cue.TimedCue, opts Options) ([]scc.Entry, error) {
 	tokens := cue.Compile(cues)
-	sched := schedule.NewScheduler(opts.FPS, schedule.WithCCCountPolicy(opts.CCCount))
+	sched := schedule.NewScheduler(opts.FPS,
+		schedule.WithCCCountPolicy(opts.CCCount), schedule.WithFlipTiming(opts.FlipTiming))
 	var lastMS int64
 	for _, tt := range tokens {
 		ms := tt.Time.Milliseconds()

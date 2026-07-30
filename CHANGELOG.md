@@ -9,7 +9,49 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+### Added
+
+- `schedule.FlipTiming` (`FlipOnTime`, `FlipAfterBuild`) and `schedule.WithFlipTiming`, plus
+  `convert.Options.FlipTiming` internally, and a `-no-preroll` flag on `go608-inject` and
+  `go608-extract`. See the Fixed entry above.
+
 ### Fixed
+
+- **Captions appeared 0.2–0.5 s later than their cue said.** A pop-on caption is two
+  transmissions — a build into non-displayed memory, then the `EOC` that flips it on screen
+  — and both drain at one byte pair per frame. The build was transmitted *starting* at the
+  cue's time, so the caption only became visible a build later: measured **367 ms** for
+  "HELLO" and **433 ms** for "SECOND ONE" at 30 fps (longer text appeared later), halving
+  at 60 fps.
+
+  `schedule` now backdates the build so its `EOC` lands on the pushed time —
+  `schedule.FlipOnTime`, the new default. A WebVTT → 608 → WebVTT round-trip is now
+  frame-exact where it used to slide:
+
+  ```text
+  in                     1.000→3.000  3.000→5.000  5.000→6.000
+  before (v0.7.0)        1.433→3.467  3.467→5.367  5.367→6.000
+  after                  1.000→3.000  3.000→5.000  5.000→6.000
+  ```
+
+  The old timing compounded — re-converting the output shifted it again (1.000 → 1.367 →
+  1.667); the new default is stable across repeated conversions. Ends were always exact,
+  because the clearing `EDM` *is* the visible change. A batch that does not end in an `EOC`
+  (a bare `EDM`, a roll-up `CR`) is likewise never backdated.
+
+  This also reconciles the two containers' timing conventions: an SCC entry's timecode is
+  when its first pair is **transmitted**, a WebVTT cue's start is when the caption is
+  **displayed**, and they differ by exactly the build. So **SCC → WebVTT → SCC now returns
+  the original timecodes** (`00:00:01:00`, previously `00:00:01:12`), the only remaining
+  asymmetry being the terminating `EDM` that `cue.Compile` appends for a dangling final
+  cue. 608 → text is unchanged: it always reported when a decoder actually shows the
+  caption.
+
+  Affects `go608-inject` (mp4 and the text → SCC path) and `go608-extract`'s text → SCC
+  path. `generate.Generator` and `generate.BuildUnitCues` are unaffected — both already
+  pushed build and `EOC` as separate batches, which is the same pre-roll done by hand.
+  Pass `-no-preroll` (CLI) or `schedule.WithFlipTiming(schedule.FlipAfterBuild)` to
+  restore the v0.7.0 timing.
 
 - **A `Decoder` fed one byte pair at a time decoded differently from one fed a whole
   buffer**, corrupting two 608 constructs that straddle a pair boundary. Every timed path

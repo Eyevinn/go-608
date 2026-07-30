@@ -35,8 +35,43 @@ const (
 	CCCountMinimal
 )
 
+// FlipTiming selects what a pushed batch's TimeMS means for a pop-on transition —
+// one that ends in an EOC, the control code that makes the built caption visible.
+//
+// A pop-on caption is two transmissions: a build written into non-displayed memory,
+// then the EOC that flips it on screen. Both drain at one byte pair per frame, so the
+// build occupies real time — ~18 pairs for two lines, 0.6 s at 30 fps — and where it
+// sits decides whether TimeMS names the moment the caption *appears* or the moment it
+// starts being *sent*.
+type FlipTiming int
+
+const (
+	// FlipOnTime treats TimeMS as the instant the caption becomes visible: the build
+	// is transmitted over the frames *before* TimeMS so its EOC lands on TimeMS. This
+	// is the default, because a caption's timestamp almost always means "show it now"
+	// — a subtitle cue's start, a clock's second boundary.
+	//
+	// The build is made eligible pairs*frameDur earlier. Nothing is dropped if that
+	// reaches back past the previous batch: the per-field queue drains in order with
+	// head-of-line blocking, so a build with no room simply starts as soon as the
+	// preceding pairs are done and its flip lands as early as it can — degrading to
+	// exactly FlipAfterBuild for that one transition rather than failing.
+	FlipOnTime FlipTiming = iota
+	// FlipAfterBuild treats TimeMS as the instant transmission starts, so the flip
+	// lands however long the build takes after it — 0.2-0.5 s late in practice. This
+	// was the only behaviour before v0.8.0; use it to reproduce output from then.
+	FlipAfterBuild
+)
+
 // Option configures a Scheduler at construction (functional-options pattern).
 type Option func(*Scheduler)
+
+// WithFlipTiming sets whether a pop-on batch's TimeMS is when the caption becomes
+// visible (FlipOnTime, the default) or when its transmission starts
+// (FlipAfterBuild). See FlipTiming.
+func WithFlipTiming(t FlipTiming) Option {
+	return func(s *Scheduler) { s.flipTiming = t }
+}
 
 // WithCCCountPolicy sets the cc_count policy (default CCCountFull).
 func WithCCCountPolicy(p CCCountPolicy) Option {
@@ -91,9 +126,10 @@ type Scheduler struct {
 	fullCount int  // cached round(600/fps)
 	single608 bool // true above 30 fps: one 608 pair total per frame
 
-	policy   CCCountPolicy
-	channel  int
-	doubling cta608.Doubling
+	policy     CCCountPolicy
+	channel    int
+	doubling   cta608.Doubling
+	flipTiming FlipTiming
 
 	q1, q2 fifo // per-field pair queues (field 1, field 2)
 }
@@ -109,10 +145,11 @@ type Scheduler struct {
 // carriage.BuildCCData on the first frame.
 func NewScheduler(fps float64, opts ...Option) *Scheduler {
 	s := &Scheduler{
-		fps:      fps,
-		policy:   CCCountFull,
-		channel:  1,
-		doubling: cta608.DoublingDefault,
+		fps:        fps,
+		policy:     CCCountFull,
+		channel:    1,
+		doubling:   cta608.DoublingDefault,
+		flipTiming: FlipOnTime,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -150,18 +187,57 @@ func (s *Scheduler) Push(t TimedTokens) {
 	if field == 0 {
 		field = 1
 	}
-	data := cta608.Serialize(t.Tokens, cta608.SerializeOptions{
+	// Under FlipOnTime a pop-on transition is enqueued as two runs: the build,
+	// backdated so it finishes just before TimeMS, and the EOC at TimeMS itself. A
+	// batch with no EOC (a bare EDM clear, a roll-up CR) is the visible change itself
+	// and is never backdated — moving it would move the very thing being timed.
+	if s.flipTiming == FlipOnTime {
+		if build, eoc := splitEOC(t.Tokens); len(eoc) > 0 && len(build) > 0 {
+			buildData := s.serialize(build, field)
+			preRollMS := int64(math.Round(float64(len(buildData)/2) * 1000.0 / s.fps))
+			s.enqueue(buildData, field, t.TimeMS-preRollMS)
+			s.enqueue(s.serialize(eoc, field), field, t.TimeMS)
+			return
+		}
+	}
+	s.enqueue(s.serialize(t.Tokens, field), field, t.TimeMS)
+}
+
+// serialize renders tokens to odd-parity byte pairs under the Scheduler's channel
+// and doubling policy.
+func (s *Scheduler) serialize(toks []cta608.Token, field int) []byte {
+	return cta608.Serialize(toks, cta608.SerializeOptions{
 		Field:    field,
 		Channel:  s.channel,
 		Doubling: s.doubling,
 	})
+}
+
+// enqueue appends data's byte pairs to the field's queue, all eligible at eligibleMS.
+func (s *Scheduler) enqueue(data []byte, field int, eligibleMS int64) {
 	q := &s.q1
 	if field == 2 {
 		q = &s.q2
 	}
 	for i := 0; i+1 < len(data); i += 2 {
-		q.push(queued{b0: data[i], b1: data[i+1], eligibleMS: t.TimeMS})
+		q.push(queued{b0: data[i], b1: data[i+1], eligibleMS: eligibleMS})
 	}
+}
+
+// splitEOC splits a transition into its build and a trailing EOC, the control code
+// that makes a pop-on caption visible. eoc is nil when the sequence does not end in
+// one, which marks a transition whose last token is itself the visible change.
+//
+// generate has its own copy for the same reason: it is seven lines, and sharing it
+// would mean either exporting it from schedule for one caller or growing the cta608
+// core's API, both worse than the duplication.
+func splitEOC(toks []cta608.Token) (build, eoc []cta608.Token) {
+	if n := len(toks); n > 0 {
+		if c, ok := toks[n-1].(cta608.Command); ok && c.Op == cta608.EOC {
+			return toks[:n-1], toks[n-1:]
+		}
+	}
+	return toks, nil
 }
 
 // Frame emits the frame for the video frame presented at frameWallMS. It drains
