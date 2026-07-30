@@ -253,6 +253,20 @@ func NewGenerator(fps float64, cfg Config) *Generator
 // Advance one frame; returns the per-frame triple (via the internal scheduler). The caller wraps
 // with carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, codec) and splices.
 func (g *Generator) NextFrame(frameWallMS int64) schedule.Frame
+
+// Per-unit cues — the segment-oriented counterpart (one call per DASH segment / MoQ group).
+// Unit's three fields are INDEPENDENT: a unit's start is not assumed to be Nr x duration
+// (durations vary, timelines have gaps, numbering need not start at t=0). Nothing derives
+// one from the other — StartMS is the only timing input, Nr is passed through to content.
+type Unit    struct { Nr int64; StartMS int64; Frames int }
+type UnitCue struct { Lines []cta608.Line }   // empty Lines clears (EDM)
+type CueContentFunc func(u Unit, cueIdx int, cueStartMS int64) UnitCue
+func NumCues(unitDurMS, targetPeriodMS int64) int
+func BuildUnitCues(fps float64, u Unit, targetPeriodMS int64, content CueContentFunc,
+	opts ...UnitOption) ([]schedule.Frame, error)
+// Move each EOC onto its cue's first frame; the build rides the preceding frames, which for
+// a unit's first cue is the PREVIOUS unit. next names that following unit outright.
+func WithFlipAtCueStart(next Unit, content CueContentFunc) UnitOption
 ```
 
 > **Cross-note reconciliation:** [#7](docs/design/cea608-wallclock-generation.md) and

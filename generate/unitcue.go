@@ -36,6 +36,20 @@ import (
 // spending the previous slice's frames on the build instead. Either way, a build that
 // does not fit the frames available to it is an error (the Overran case).
 
+// Unit identifies one unit of video — a DASH segment, a MoQ group — as three
+// independent facts: which unit it is, when it starts, and how long it is in frames.
+//
+// Nr and StartMS are deliberately separate inputs. A unit's start is *not* assumed to
+// be Nr times a fixed duration: segment durations vary (a $Time$-based timeline), a
+// timeline can contain gaps, and a numbering epoch need not begin at t=0. Nothing in
+// go-608 derives one from the other — Nr is passed through to CueContentFunc untouched
+// and never used for timing, while StartMS is the only thing timing is measured from.
+type Unit struct {
+	Nr      int64 // unit/segment/group number, as the consumer numbers them
+	StartMS int64 // wall-clock time of the unit's first frame
+	Frames  int   // video frames in the unit
+}
+
 // UnitCue is the resolved content of one cue within a unit: the caption lines to
 // display for its slice. The caller formats the text (timestamp, segment number,
 // …); go-608 owns the pop-on build, the EOC flip, cc_count and (via carriage) the
@@ -45,12 +59,16 @@ type UnitCue struct {
 	Lines []cta608.Line
 }
 
-// CueContentFunc returns the content for cue cueIdx of a unit, whose slice starts
-// at wall-clock cueStartMS. It is called once per cue, in order. Consumers close
-// over per-unit facts (segment number, timescale, …) and format the lines here;
-// keeping the content a pure function of (cueIdx, cueStartMS) keeps a unit's
-// output independent of any other unit.
-type CueContentFunc func(cueIdx int, cueStartMS int64) UnitCue
+// CueContentFunc returns the content for cue cueIdx of unit u, whose slice starts at
+// wall-clock cueStartMS. It is called once per cue, in order.
+//
+// Everything the content depends on arrives as an argument, so one CueContentFunc
+// serves every unit — including the next unit's first cue under WithFlipAtCueStart,
+// which is why u is passed rather than closed over. cueStartMS is u.StartMS advanced
+// by the cue's offset within the unit; it is resolved here because the caller has no
+// reason to know how the unit was sliced. Keeping the content a pure function of
+// (u, cueIdx, cueStartMS) keeps a unit's output independent of any other unit.
+type CueContentFunc func(u Unit, cueIdx int, cueStartMS int64) UnitCue
 
 // NumCues returns how many ≈targetPeriodMS cues evenly divide a unit of
 // unitDurMS: max(1, round(unitDurMS/targetPeriodMS)). targetPeriodMS<=0 defaults
@@ -72,7 +90,8 @@ type UnitOption func(*unitConfig)
 
 type unitConfig struct {
 	flipAtCueStart bool
-	next           CueContentFunc
+	next           Unit
+	nextContent    CueContentFunc
 }
 
 // WithFlipAtCueStart moves each cue's EOC onto the first frame of its own slice,
@@ -88,9 +107,19 @@ type unitConfig struct {
 //
 // The cost is that captions no longer fit inside a unit. A cue's build lives in the
 // frames preceding its flip, which for the first cue of a unit means the *previous*
-// unit. next therefore supplies the following unit's first cue so this unit's tail
-// can carry its build; pass nil to leave the tail empty, which makes the next unit's
-// first caption blank. next is called once, as next(0, unitStartMS+unitDurMS).
+// unit. next therefore names the following unit so this unit's tail can carry its
+// build: content is called once, as content(next, 0, next.StartMS). Only next.Nr and
+// next.StartMS are read — next.Frames is not, since only that unit's first cue is
+// needed here.
+//
+// next.StartMS is taken as given rather than computed as this unit's end. Units are
+// not assumed to be contiguous or equal in duration, so a gap or a length change is
+// expressed simply by saying where the next unit actually starts. Pass a nil content
+// to leave the tail empty, which makes the next unit's first caption blank.
+//
+// next must be the same Unit the next BuildUnitCues call receives, and with the same
+// content function: the build placed in this unit's tail has to match the flip that
+// call emits, and both are derived from those two inputs.
 //
 // Consequences worth knowing:
 //   - A receiver that starts, seeks, or joins mid-stream gets a leading EOC without the
@@ -106,17 +135,21 @@ type unitConfig struct {
 //   - A unit's first cue is always encoded from a clean encoder state, so the build
 //     placed in the previous unit's tail matches the flip the next unit emits even
 //     though the two are produced by separate calls.
-func WithFlipAtCueStart(next CueContentFunc) UnitOption {
+func WithFlipAtCueStart(next Unit, content CueContentFunc) UnitOption {
 	return func(c *unitConfig) {
 		c.flipAtCueStart = true
 		c.next = next
+		c.nextContent = content
 	}
 }
 
-// BuildUnitCues returns the per-frame CTA-608 payload for one unit of unitFrames
-// video frames at fps, the unit starting at wall-clock unitStartMS. It splits the
-// unit into N = NumCues(unitDurMS, targetPeriodMS) equal cue slices, calls content
-// for each slice's lines, and schedules a pop-on build + EOC flip for each slice.
+// BuildUnitCues returns the per-frame CTA-608 payload for one unit of video (a DASH
+// segment, a MoQ group) at fps. It splits the unit into
+// N = NumCues(unitDurMS, targetPeriodMS) equal cue slices, calls content for each
+// slice's lines, and schedules a pop-on build + EOC flip for each slice.
+//
+// u carries the unit's number, start time and frame count as independent facts; see
+// Unit. Timing comes from u.StartMS alone, and u.Nr is only handed to content.
 // Frame i of the returned slice is consumed by
 // carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, codec) for AVC/HEVC, or
 // carriage.FrameMetadataOBU(f.Field1, f.Field2, f.CCCount) for AV1.
@@ -138,11 +171,11 @@ func WithFlipAtCueStart(next CueContentFunc) UnitOption {
 // fps must be a broadcast caption rate (23.976–60); schedule.NewScheduler panics
 // otherwise.
 func BuildUnitCues(
-	fps float64, unitFrames int, unitStartMS, targetPeriodMS int64, content CueContentFunc,
+	fps float64, u Unit, targetPeriodMS int64, content CueContentFunc,
 	opts ...UnitOption,
 ) ([]schedule.Frame, error) {
-	if unitFrames <= 0 {
-		return nil, fmt.Errorf("unitFrames must be > 0, got %d", unitFrames)
+	if u.Frames <= 0 {
+		return nil, fmt.Errorf("Unit.Frames must be > 0, got %d", u.Frames)
 	}
 	if content == nil {
 		return nil, fmt.Errorf("content function must not be nil")
@@ -157,13 +190,14 @@ func BuildUnitCues(
 		return nil, fmt.Errorf("fps %.3f yields cc_count %d outside 2..31 (use a 23.976..60 caption rate)", fps, cc)
 	}
 	frameDurMS := 1000.0 / fps
+	unitFrames := u.Frames
 	unitDurMS := int64(math.Round(float64(unitFrames) * frameDurMS))
 	n := NumCues(unitDurMS, targetPeriodMS)
 
 	sched := schedule.NewScheduler(fps, schedule.WithDoubling(cta608.DoublingOff))
 	var enc cta608.Encoder
 
-	wallAt := func(i int) int64 { return unitStartMS + int64(math.Round(float64(i)*frameDurMS)) }
+	wallAt := func(i int) int64 { return u.StartMS + int64(math.Round(float64(i)*frameDurMS)) }
 	// boundary(k) is the first unit-relative frame of cue k; boundary(n)==unitFrames.
 	boundary := func(k int) int { return int(math.Round(float64(k) * float64(unitFrames) / float64(n))) }
 
@@ -173,7 +207,7 @@ func BuildUnitCues(
 	for k := 0; k < n; k++ {
 		start := boundary(k)
 		end := boundary(k + 1)
-		cue := content(k, wallAt(start))
+		cue := content(u, k, wallAt(start))
 		toks := enc.Apply(cta608.CaptionBlock{Lines: cue.Lines, Mode: cta608.PopOn})
 		if len(toks) == 0 {
 			continue // no change from the previous cue: nothing to flip
@@ -225,9 +259,13 @@ func BuildUnitCues(
 	// Carry the build for the next unit's first cue in this unit's tail, so that unit
 	// can flip it on its own first frame. A fresh encoder mirrors the clean state the
 	// next call will start from, so the bytes match the flip it will emit.
-	if cfg.flipAtCueStart && cfg.next != nil {
+	//
+	// The next unit is described by cfg.next, not computed from this one: its start is
+	// whatever the caller says it is, so a gap between units or a change of duration
+	// needs no special case here.
+	if cfg.flipAtCueStart && cfg.nextContent != nil {
 		var nextEnc cta608.Encoder
-		nextCue := cfg.next(0, wallAt(unitFrames))
+		nextCue := cfg.nextContent(cfg.next, 0, cfg.next.StartMS)
 		toks := nextEnc.Apply(cta608.CaptionBlock{Lines: nextCue.Lines, Mode: cta608.PopOn})
 		if buildToks, eocToks := splitEOC(toks); len(eocToks) > 0 {
 			pairs := serializedPairs(buildToks)

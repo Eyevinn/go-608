@@ -15,6 +15,56 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   `convert.Options.FlipTiming` internally, and a `-no-preroll` flag on `go608-inject` and
   `go608-extract`. See the Fixed entry above.
 
+### Changed
+
+- **BREAKING (`generate`): a unit's number and its start time are now independent inputs.**
+  `BuildUnitCues` takes a `Unit{Nr, StartMS, Frames}` instead of loose `unitFrames` /
+  `unitStartMS` arguments, `CueContentFunc` receives that `Unit`, and
+  `WithFlipAtCueStart` names the *next* `Unit` outright:
+
+  ```go
+  type Unit struct {
+      Nr      int64 // unit/segment/group number, as the consumer numbers them
+      StartMS int64 // wall-clock time of the unit's first frame
+      Frames  int   // video frames in the unit
+  }
+
+  func BuildUnitCues(fps float64, u Unit, targetPeriodMS int64, content CueContentFunc,
+      opts ...UnitOption) ([]schedule.Frame, error)
+  type CueContentFunc func(u Unit, cueIdx int, cueStartMS int64) UnitCue
+  func WithFlipAtCueStart(next Unit, content CueContentFunc) UnitOption
+  ```
+
+  A unit's start is no longer assumed to be `Nr × duration`. Under `WithFlipAtCueStart`
+  the next unit's start was computed as *this* unit's end, which is wrong for a
+  variable-duration timeline (`$Time$`-based `SegmentTemplate`), for a timeline with a
+  gap, and for any numbering epoch that does not begin at `t=0`. In those cases a unit
+  preloaded a caption for the wrong time and the following unit flipped it anyway, so the
+  screen showed a stale guess. Nothing now derives one field from the other: `StartMS` is
+  the only timing input and `Nr` is passed through to `CueContentFunc` untouched.
+
+  Migration — the number moves from a closure into the argument, so **one** content
+  function now serves every unit instead of one per unit:
+
+  ```go
+  // before
+  func content(segNr int) generate.CueContentFunc {
+      return func(cueIdx int, cueStartMS int64) generate.UnitCue { /* uses segNr */ }
+  }
+  frames, err := generate.BuildUnitCues(fps, 60, startMS, 1000, content(42),
+      generate.WithFlipAtCueStart(content(43)))
+
+  // after
+  func content(u generate.Unit, cueIdx int, cueStartMS int64) generate.UnitCue { /* uses u.Nr */ }
+  unitA := generate.Unit{Nr: 42, StartMS: startMS, Frames: 60}
+  unitB := generate.Unit{Nr: 43, StartMS: nextStartMS, Frames: 60} // wherever it really starts
+  frames, err := generate.BuildUnitCues(fps, unitA, 1000, content,
+      generate.WithFlipAtCueStart(unitB, content))
+  ```
+
+  `WithFlipAtCueStart(Unit{}, nil)` replaces `WithFlipAtCueStart(nil)` for "leave the tail
+  empty". `NumCues` and `UnitCue` are unchanged.
+
 ### Fixed
 
 - **Captions appeared 0.2–0.5 s later than their cue said.** A pop-on caption is two
@@ -73,6 +123,7 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
   `Parse` is unchanged — it still starts from a fresh state, so whole-buffer parsing and
   `Parse`-then-`Push` callers behave exactly as before.
+
 
 ## [0.7.0] - 2026-07-28
 
