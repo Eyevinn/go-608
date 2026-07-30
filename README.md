@@ -155,9 +155,18 @@ It models 608's double buffer with an internal displayed / non-displayed grid
 display), scrolls the **roll-up** window on `CR`, and writes **paint-on** rows
 straight to the display. `Changed()` reports whether the displayed `Screen`
 changed since the previous call — the signal WebVTT/SRT cue segmentation pivots
-on. **XDS** is dropped by `Parse` and **text mode** (`TR`/`RTD`) is recognized but
-not rendered (SPEC §1.3). A runnable decode snippet lives in
-[`examples/`](examples/).
+on — and `Mode()` reports the current caption mode, which that segmentation also
+needs (see [Timed-text cues](#timed-text-cues-the-cue-package)). **XDS** is dropped
+by `Parse` and **text mode** (`TR`/`RTD`) is recognized but not rendered
+(SPEC §1.3). A runnable decode snippet lives in [`examples/`](examples/).
+
+**Feeding is incremental.** Successive `Feed` calls form one continuous stream, so
+driving the decoder one byte pair per video frame — which is what preserves
+per-frame timing — decodes identically to feeding the whole buffer. Two 608
+constructs straddle a pair boundary and depend on that: a **doubled control code**
+(collapsed to one logical token, so a doubled roll-up `CR` scrolls once rather than
+twice) and an **extended character** with its preceding fallback, where the
+backspace-and-replace has to reach a character already displayed.
 
 ## Carriage (`cc_data` / SEI)
 
@@ -461,11 +470,38 @@ SCC/SEI containers — because a format's richer grid and palette are quantized 
 **608 → text — `Segment`.** A timeline of displayed-`Screen` states
 (`TimedScreen`, sampled whenever `Decoder.Changed` fires) is cut into cues by one
 unified rule for every caption mode: each displayed-`Screen` change closes the
-current cue and opens a new one; an empty screen is a **gap** (no cue). Pop-on
-gives one cue per caption, roll-up **one cue per scroll step** (the visible lines
-repeat as the window scrolls), paint-on a cue per in-place change. A caption
+current cue and opens a new one; an empty screen is a **gap** (no cue). A caption
 still shown when the stream ends takes a configurable end — `SegmentOptions.StreamEnd`
 when set, else `Start + DefaultDur`.
+
+**Direct-write modes need a coalescing rule.** Pop-on builds into non-displayed
+memory, so its display changes once per caption and one cue falls out for free.
+Roll-up and paint-on write straight to the *displayed* screen, so **every byte pair
+changes it** — a bare screen-change rule would cut a cue per two characters, giving
+14 one-frame cues for two roll-up lines. `SegmentOptions.Coalesce` picks the
+boundary:
+
+```go
+cue.Segment(changes, cue.SegmentOptions{})                             // CoalesceStructural
+cue.Segment(changes, cue.SegmentOptions{Coalesce: cue.CoalesceNone})   // per change
+```
+
+- **`CoalesceStructural` (default)** cuts only at a structural event — a scroll, an
+  erase, a jump to another row, an overwrite — and never while text is merely being
+  added to a row. Pop-on gives one cue per caption, roll-up **one cue per scroll
+  step** (the visible lines repeat as the window scrolls), paint-on **one per write
+  burst**. A period's cue starts at its *first* change and carries the screen as of
+  its *last*, so the completed caption is displayed from the moment its first
+  characters appeared; timestamping at completion instead would leave the typing
+  interval in a gap.
+- **`CoalesceNone`** cuts at every change: the faithful rendering of what a viewer
+  sees, two characters at a time, and the only mode needing no lookahead.
+
+Coalescing is gated on the caption mode, carried by `TimedScreen.Mode` from
+`cta608.Decoder.Mode()`. By screen alone a pop-on caption replaced by a longer one
+is indistinguishable from a line being typed, so without the mode the rule would
+silently merge two distinct captions. `TimedScreen.Mode`'s zero value is pop-on,
+which never coalesces.
 
 **text → 608 — `Compile`.** Every cue compiles to a **pop-on** caption.
 Overlapping cues are **merged by position** at each boundary: the target `Screen`
@@ -692,6 +728,19 @@ cue-mediated, so those directions decode/`Segment` (out) or `Compile`/`schedule`
 `-stream-end`/`-default-dur` set the dangling-cue policy; inject's `-fps` and
 `-cc-count` (`full`/`minimal`) size the per-frame cadence; both infer the format
 from the file extension (override with `-from`/`-to`).
+
+Two flags select a timing/segmentation policy, each restoring pre-v0.8.0 behaviour:
+
+| flag | on | effect |
+|---|---|---|
+| `-no-preroll` | `go608-inject`, `go608-extract` | transmit each pop-on build *starting at* its cue time instead of ahead of it, so the caption appears ~0.2–0.5 s late (see [Scheduling](#scheduling-timed-tokens--frames)) |
+| `-per-change` | `go608-extract` | for roll-up/paint-on input, emit one cue per displayed-screen change — roughly one per two characters — instead of one per scroll step (see [Timed-text cues](#timed-text-cues-the-cue-package)) |
+
+Because a WebVTT cue's start is when the caption is **displayed** while an SCC
+entry's timecode is when its first byte pair is **transmitted** — and those differ
+by exactly the pop-on build, which is now pre-rolled — `SCC → WebVTT → SCC` returns
+the original timecodes. The only asymmetry left is the terminating erase `Compile`
+appends for a caption the source never cleared.
 
 ## Building
 
