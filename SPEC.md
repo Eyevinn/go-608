@@ -228,6 +228,13 @@ being that it fails to compile rather than compiling into a switch that silently
 
 ```go
 type Frame struct { Field1, Field2 []byte; CCCount int } // per video frame; feed to carriage
+// FlipTiming: what a pushed batch's TimeMS means for a pop-on transition (one ending in EOC).
+// FlipOnTime (default) = the instant the caption becomes VISIBLE (the build is backdated so its
+// EOC lands on TimeMS); FlipAfterBuild = the instant transmission STARTS (the pre-v0.8.0
+// behaviour, ~0.2-0.5 s late). A batch with no EOC is the visible change itself, never moved.
+type FlipTiming int
+const ( FlipOnTime FlipTiming = iota; FlipAfterBuild )
+func WithFlipTiming(t FlipTiming) Option
 type Scheduler struct { /* fps, cc_count policy, per-field pair queues */ }
 func NewScheduler(fps float64, opts ...Option) *Scheduler
 // Enqueue wall-time-tagged token transitions (from generate or cue.Compile).
@@ -517,6 +524,17 @@ SCC/SEI containers.
   SRT→608 uses a default bottom anchor; position-less WebVTT → same default.
 - **Timing boundary:** the mapping stops at **timed tokens/Screens**; frame scheduling is the shared
   `schedule` layer (§4.3), not part of the format packages.
+- **Cue times are display times (MUST).** A cue's `Start` is when the caption is **visible**, so the
+  pop-on build is transmitted over the frames *before* it (`schedule.FlipOnTime`) rather than starting
+  on it. Building *from* the cue start instead makes every caption appear a build-length late —
+  measured 367–433 ms at 30 fps, halving at 60 fps — and the error compounds over repeated
+  conversions. `schedule.FlipAfterBuild` (`-no-preroll`) restores that pre-v0.8.0 behaviour.
+- **The two containers time captions by different conventions**, and this is what reconciles them: an
+  SCC entry's timecode is when its first byte pair is **transmitted**, while a WebVTT/SRT cue start is
+  when the caption is **displayed**. They differ by exactly the build, so with the build pre-rolled
+  SCC → text → SCC returns the original timecodes (the only remaining asymmetry is the terminating
+  EDM `cue.Compile` always appends for a dangling final cue). 608 → text is unaffected either way:
+  it reports when the decoder actually shows the caption.
 
 ### 8.3 Extension seam & TTML (fog)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/Eyevinn/go-608/cta608"
 	"github.com/Eyevinn/go-608/cue"
 	"github.com/Eyevinn/go-608/scc"
+	"github.com/Eyevinn/go-608/schedule"
 )
 
 func TestParseFormat(t *testing.T) {
@@ -149,5 +150,98 @@ func TestCuesFromUnitsExtendedChars(t *testing.T) {
 	}
 	if got := rowsText(cues[len(cues)-1].Content); got != text {
 		t.Errorf("decoded %q, want %q", got, text)
+	}
+}
+
+// TestSCCTextSCCRoundTripTiming is the payoff of the FlipOnTime default, measured on
+// the real fixture. SCC and WebVTT time captions by different conventions: an SCC
+// entry's timecode is when its first byte pair is *transmitted*, while a WebVTT cue's
+// start is when the caption is *visible*. They differ by exactly the pop-on build, so
+// pre-rolling the build makes the two conventions agree and SCC -> text -> SCC an
+// identity on the timecode.
+//
+// With FlipAfterBuild the returned entry is late by the build length (12 frames here),
+// which is what shipped before v0.8.0.
+func TestSCCTextSCCRoundTripTiming(t *testing.T) {
+	const sccIn = "Scenarist_SCC V1.0\n\n" +
+		"00:00:01:00\t9420 9420 94ae 94ae 94e0 94e0 c845 4c4c 4f20 574f 524c c480 942f 942f\n\n" +
+		"00:00:04:00\t942c 942c\n"
+
+	for _, tc := range []struct {
+		name    string
+		timing  schedule.FlipTiming
+		wantTC  string
+		wantVTT time.Duration // the cue start the VTT step reports
+	}{
+		// The EOC is the 13th of 14 pairs, so the caption becomes visible 12 frames
+		// (400 ms at 30 fps) after the entry's timecode. That display time is what
+		// WebVTT must carry, and pre-rolling maps it back onto the original timecode.
+		{"FlipOnTime", schedule.FlipOnTime, "00:00:01:00", 1400 * time.Millisecond},
+		{"FlipAfterBuild", schedule.FlipAfterBuild, "00:00:01:12", 1400 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := Options{FPS: 30, FlipTiming: tc.timing}
+
+			cues, err := ReadCues(FormatSCC, strings.NewReader(sccIn), opts)
+			if err != nil {
+				t.Fatalf("ReadCues SCC: %v", err)
+			}
+			if len(cues) != 1 {
+				t.Fatalf("got %d cues, want 1", len(cues))
+			}
+			// Reading is timing-policy-free: it reports when the decoder shows the
+			// caption, which is the build's end either way.
+			if cues[0].Start != tc.wantVTT {
+				t.Errorf("cue start = %v, want %v", cues[0].Start, tc.wantVTT)
+			}
+			if cues[0].End != 4*time.Second {
+				t.Errorf("cue end = %v, want 4s (the EDM lands exactly)", cues[0].End)
+			}
+
+			var buf bytes.Buffer
+			if err := WriteCues(FormatSCC, &buf, cues, opts); err != nil {
+				t.Fatalf("WriteCues SCC: %v", err)
+			}
+			if !strings.Contains(buf.String(), tc.wantTC+"\t") {
+				t.Errorf("round-tripped SCC lacks timecode %s:\n%s", tc.wantTC, buf.String())
+			}
+		})
+	}
+}
+
+// The whole SCC document must come back byte-identical under the default timing —
+// pairs and timecodes — so the only asymmetry left in SCC -> text -> SCC is the
+// terminating EDM that cue.Compile always appends.
+func TestSCCTextSCCRoundTripByteExact(t *testing.T) {
+	const sccIn = "Scenarist_SCC V1.0\n\n" +
+		"00:00:01:00\t9420 9420 94ae 94ae 94e0 94e0 c845 4c4c 4f20 574f 524c c480 942f 942f\n\n" +
+		"00:00:04:00\t942c 942c\n"
+	opts := Options{FPS: 30}
+
+	cues, err := ReadCues(FormatSCC, strings.NewReader(sccIn), opts)
+	if err != nil {
+		t.Fatalf("ReadCues: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := WriteCues(FormatSCC, &buf, cues, opts); err != nil {
+		t.Fatalf("WriteCues: %v", err)
+	}
+	norm := func(s string) []string {
+		var out []string
+		for _, ln := range strings.Split(strings.TrimSpace(s), "\n") {
+			if ln = strings.TrimSpace(ln); ln != "" {
+				out = append(out, ln)
+			}
+		}
+		return out
+	}
+	got, want := norm(buf.String()), norm(sccIn)
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines, want %d:\n%s", len(got), len(want), buf.String())
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d:\n got  %q\n want %q", i, got[i], want[i])
+		}
 	}
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/Eyevinn/go-608/internal/dump"
 	"github.com/Eyevinn/go-608/internal/mp4io"
 	"github.com/Eyevinn/go-608/scc"
+	"github.com/Eyevinn/go-608/schedule"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
@@ -61,6 +62,7 @@ type options struct {
 	dumpMode   bool
 	streamEnd  time.Duration
 	defaultDur time.Duration
+	noPreroll  bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -78,6 +80,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.Float64Var(&opts.fps, "fps", 30, "frame rate for SCC framing/timecodes")
 	fs.BoolVar(&opts.drop, "drop", false, "write drop-frame SCC timecodes")
 	fs.BoolVar(&opts.dumpMode, "dump", false, "print the field pairs / tokens / Screen (like go608-info)")
+	fs.BoolVar(&opts.noPreroll, "no-preroll", false,
+		"when writing SCC from timed text, start each pop-on build at its cue time instead of\n"+
+			"ahead of it, so the caption appears ~0.2-0.5s late (the pre-v0.8.0 timing)")
 	fs.DurationVar(&opts.streamEnd, "stream-end", 0, "absolute end time for a dangling final cue (e.g. 30s)")
 	fs.DurationVar(&opts.defaultDur, "default-dur", 2*time.Second, "fallback duration for a dangling final cue")
 	err := fs.Parse(args[1:])
@@ -111,10 +116,17 @@ func run(args []string, w io.Writer) error {
 		return fmt.Errorf("fps must be positive, got %g", opts.fps)
 	}
 
+	// -no-preroll restores the pre-v0.8.0 timing on the text -> SCC write path, where a
+	// cue's start is when its pop-on build begins rather than when the caption appears.
+	flipTiming := schedule.FlipOnTime
+	if opts.noPreroll {
+		flipTiming = schedule.FlipAfterBuild
+	}
 	convOpts := convert.Options{
-		FPS:       opts.fps,
-		DropFrame: opts.drop,
-		Segment:   cue.SegmentOptions{StreamEnd: opts.streamEnd, DefaultDur: opts.defaultDur},
+		FPS:        opts.fps,
+		DropFrame:  opts.drop,
+		Segment:    cue.SegmentOptions{StreamEnd: opts.streamEnd, DefaultDur: opts.defaultDur},
+		FlipTiming: flipTiming,
 	}
 
 	mp4Input := !isTimedText(opts.input, opts.from)

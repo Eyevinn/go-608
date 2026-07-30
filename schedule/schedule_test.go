@@ -1,6 +1,8 @@
 package schedule
 
 import (
+	"bytes"
+	"math"
 	"reflect"
 	"testing"
 
@@ -300,5 +302,162 @@ func TestFifoResetsWhenDrained(t *testing.T) {
 	s.Push(TimedTokens{Tokens: []cta608.Token{cta608.Chars{Text: "CD"}}})
 	if f := s.Frame(33); len(f.Field1) != 2 {
 		t.Fatalf("drain after reset: Field1 = %x", f.Field1)
+	}
+}
+
+// A pop-on transition's EOC must land on the pushed time, with the build arriving
+// over the preceding frames. This is the FlipOnTime default: a cue's timestamp means
+// "show it now", so the caption has to be visible at that frame, not start being
+// transmitted then.
+func TestFlipOnTimeLandsEOCOnPushedTime(t *testing.T) {
+	const fps = 30.0
+	toks := []cta608.Token{
+		cta608.SetMode{Mode: cta608.PopOn},
+		cta608.Command{Op: cta608.ENM},
+		cta608.PAC{Row: 15, Indent: cta608.NoIndent, Pen: cta608.Pen{Color: cta608.White}},
+		cta608.Chars{Text: "HELLO"},
+		cta608.Command{Op: cta608.EOC},
+	}
+
+	for _, tc := range []struct {
+		name    string
+		timing  FlipTiming
+		wantEOC int // frame the EOC (94 2f) is transmitted on
+	}{
+		// RCL, ENM and the PAC are doubled (2 pairs each) and "HELLO" packs into 3,
+		// so the build is 9 pairs. FlipAfterBuild therefore flips 9 frames late,
+		// while FlipOnTime backdates the build to land the EOC on frame 30 itself.
+		{"FlipOnTime", FlipOnTime, 30},
+		{"FlipAfterBuild", FlipAfterBuild, 39},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewScheduler(fps, WithFlipTiming(tc.timing))
+			s.Push(TimedTokens{TimeMS: 1000, Field: 1, Tokens: toks})
+
+			eocFrame := -1
+			var pairs int
+			for frame := 0; frame < 120; frame++ {
+				f := s.Frame(int64(math.Round(float64(frame) * 1000.0 / fps)))
+				if len(f.Field1) != 2 {
+					continue
+				}
+				pairs++
+				if f.Field1[0] == 0x94 && f.Field1[1] == 0x2f && eocFrame < 0 {
+					eocFrame = frame
+				}
+			}
+			if eocFrame != tc.wantEOC {
+				t.Errorf("EOC on frame %d, want %d", eocFrame, tc.wantEOC)
+			}
+			// Both timings transmit the same bytes; only their placement differs.
+			// 9 build pairs + a doubled EOC.
+			if pairs != 11 {
+				t.Errorf("drained %d pairs, want 11", pairs)
+			}
+		})
+	}
+}
+
+// Splitting the transition at the EOC must not change what is transmitted — the two
+// timings differ in placement only. If Serialize's null-pair frame alignment behaved
+// differently across a split, the pre-roll would silently alter the wire bytes.
+func TestFlipOnTimeSameBytesAsFlipAfterBuild(t *testing.T) {
+	const fps = 30.0
+	toks := []cta608.Token{
+		cta608.SetMode{Mode: cta608.PopOn},
+		cta608.Command{Op: cta608.ENM},
+		cta608.PAC{Row: 14, Indent: cta608.NoIndent, Pen: cta608.Pen{Color: cta608.Yellow}},
+		cta608.Chars{Text: "ODD LENGTH LINE"}, // odd char count exercises the pad
+		cta608.Command{Op: cta608.EOC},
+	}
+	drain := func(timing FlipTiming) []byte {
+		s := NewScheduler(fps, WithFlipTiming(timing))
+		s.Push(TimedTokens{TimeMS: 2000, Field: 1, Tokens: toks})
+		var out []byte
+		for frame := 0; frame < 200; frame++ {
+			f := s.Frame(int64(math.Round(float64(frame) * 1000.0 / fps)))
+			out = append(out, f.Field1...)
+		}
+		return out
+	}
+	on, after := drain(FlipOnTime), drain(FlipAfterBuild)
+	if !bytes.Equal(on, after) {
+		t.Errorf("FlipOnTime bytes differ from FlipAfterBuild\n on    = % x\n after = % x", on, after)
+	}
+}
+
+// A transition that is not a pop-on flip — a bare EDM clear, a roll-up CR — is itself
+// the visible change, so it must stay on its pushed frame rather than being backdated.
+func TestFlipOnTimeDoesNotMoveNonFlipTransitions(t *testing.T) {
+	const fps = 30.0
+	for _, tc := range []struct {
+		name string
+		toks []cta608.Token
+	}{
+		{"bare EDM", []cta608.Token{cta608.Command{Op: cta608.EDM}}},
+		{"roll-up CR", []cta608.Token{cta608.Command{Op: cta608.CR}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewScheduler(fps, WithFlipTiming(FlipOnTime))
+			s.Push(TimedTokens{TimeMS: 1000, Field: 1, Tokens: tc.toks})
+			first := -1
+			for frame := 0; frame < 90; frame++ {
+				f := s.Frame(int64(math.Round(float64(frame) * 1000.0 / fps)))
+				if len(f.Field1) == 2 && first < 0 {
+					first = frame
+				}
+			}
+			if first != 30 {
+				t.Errorf("first pair on frame %d, want 30 (t=1000ms, not backdated)", first)
+			}
+		})
+	}
+}
+
+// When the pre-roll reaches back past the previous transition there is physically no
+// room for both flips to be on time. Nothing may be dropped: the queue's in-order
+// draining makes the crowded build start as soon as the previous pairs are done, so
+// its flip is merely late — degrading to FlipAfterBuild for that one cue.
+func TestFlipOnTimeCrowdedPreRollDropsNothing(t *testing.T) {
+	const fps = 30.0
+	line := func(text string) []cta608.Token {
+		return []cta608.Token{
+			cta608.SetMode{Mode: cta608.PopOn},
+			cta608.Command{Op: cta608.ENM},
+			cta608.PAC{Row: 15, Indent: cta608.NoIndent, Pen: cta608.Pen{Color: cta608.White}},
+			cta608.Chars{Text: text},
+			cta608.Command{Op: cta608.EOC},
+		}
+	}
+	s := NewScheduler(fps, WithFlipTiming(FlipOnTime))
+	// Two flips 200 ms apart, each needing ~370 ms of build: they cannot both be on time.
+	s.Push(TimedTokens{TimeMS: 1000, Field: 1, Tokens: line("FIRST")})
+	s.Push(TimedTokens{TimeMS: 1200, Field: 1, Tokens: line("SECOND")})
+
+	var eocFrames []int
+	pairs := 0
+	for frame := 0; frame < 200; frame++ {
+		f := s.Frame(int64(math.Round(float64(frame) * 1000.0 / fps)))
+		if len(f.Field1) != 2 {
+			continue
+		}
+		pairs++
+		if f.Field1[0] == 0x94 && f.Field1[1] == 0x2f {
+			eocFrames = append(eocFrames, frame)
+		}
+	}
+	// Every pair of both transitions is still transmitted (11 each: 9 build + doubled EOC).
+	if pairs != 22 {
+		t.Errorf("drained %d pairs, want 22 — nothing may be dropped when the pre-roll is crowded", pairs)
+	}
+	// Both flips happen, in order, and the second is late rather than lost.
+	if len(eocFrames) != 4 { // two flips, EOC doubled
+		t.Fatalf("saw EOC on frames %v, want 4 transmissions (two doubled flips)", eocFrames)
+	}
+	if eocFrames[0] != 30 {
+		t.Errorf("first flip on frame %d, want 30 (it had room)", eocFrames[0])
+	}
+	if eocFrames[2] <= 36 {
+		t.Errorf("second flip on frame %d, want later than its 36 (t=1200ms) ideal", eocFrames[2])
 	}
 }
