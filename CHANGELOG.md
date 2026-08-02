@@ -44,6 +44,27 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 - `go608-clock -mode pop-on|paint-on|roll-up[2-4]` (default `pop-on`) selects between them.
 
+- `go608-clock -unit-mode default|cue-start|carry` and `-unit-seconds` (default 2) generate
+  through the **per-unit API** — one call per unit, as a segment server does — instead of the
+  frame-by-frame `Generator`, including the cross-unit policies that only exist there
+  (`WithFlipAtCueStart` for pop-on, `WithRollUpCarry` for roll-up). This closes a verification
+  gap: the per-unit builders were previously only decodable by go-608's own tests, and the
+  first ffmpeg run over `-unit-mode cue-start` found a real bug (see Fixed).
+
+- `generate.WallClockContent(cfg, originMS)` returns the `CueContentFunc` that renders a
+  `Config`'s lines — the same caption the `Generator` produces — so the per-unit builders can
+  serve it a unit at a time without reimplementing the content.
+
+### Fixed
+
+- `go608-clock -unit-mode cue-start` transmitted the last unit's neighbour build twice, so the
+  flip opening a unit landed a whole build (~0.77 s at 30 fps) late and the previous caption
+  lingered. `WithFlipAtCueStart` is a contract between neighbouring units — a unit's tail
+  carries the *next* unit's first-cue build, and that unit must be built expecting it — so the
+  option now goes to every unit, including the last (whose tail then preloads for a unit beyond
+  the run, exactly as the live edge of a stream does). Only the new CLI path was affected;
+  `generate.BuildUnitCues` itself is unchanged.
+
 - `generate.GeneratorOption`; `NewGenerator` now takes optional `GeneratorOption`s. Existing
   two-argument calls are unaffected.
 
