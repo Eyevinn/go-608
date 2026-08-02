@@ -35,7 +35,7 @@ the packages directly.
 | `cta608`   | Pure core: Token stream, `Screen`, `Serialize`/`Parse`, `Decoder`/`Encoder`, `CaptionBlock`. A dependency-free leaf. |
 | `carriage` | `cc_data` / T.35 carriage: SEI + NAL for AVC & HEVC, metadata OBU for AV1. The only mp4ff importer. |
 | `schedule` | Timed tokens → per-frame `{Field1, Field2, CCCount}`. The shared timing layer. |
-| `generate` | Wall-clock caption `Generator` (the first milestone).                |
+| `generate` | Wall-clock caption `Generator` (per frame) and per-unit builders (per segment / MoQ group), in pop-on, paint-on or roll-up. |
 | `scc`      | Scenarist SCC read/write — byte-exact, true SMPTE drop-frame.        |
 | `cue`      | Shared `TimedCue` intermediate + the 608↔cue mapping + a plugin seam. |
 | `webvtt`   | WebVTT serializer over the `cue` model.                              |
@@ -349,14 +349,26 @@ for each video frame at wall-clock ms `w` {
 ```
 
 It builds each upcoming second's caption through the core (`CaptionBlock` →
-`Encoder` → tokens) and drives a `schedule.Scheduler`. The caption is **pop-on**:
-built into non-displayed memory during a second and flipped on with a single
-`EOC` on that second's **last frame**, so the clock is frame-accurate and
-zero-lag (the flip pair is scheduled eligible at the flip time). Cadence is one
-field-1 pair per frame (CC1 only by default); `Config`/`LineSpec` set the rows,
-colors, and content kinds. An **overrun guard** (`Overran()`) flags a line set
-that can't finish building within the one-second budget at the given frame rate.
-A runnable N-second snippet lives in [`examples/`](examples/).
+`Encoder` → tokens) and drives a `schedule.Scheduler`. Cadence is one field-1 pair
+per frame (CC1 only by default); `Config`/`LineSpec` set the rows, colors, and
+content kinds. An **overrun guard** (`Overran()`) flags a line set that can't be
+written within the one-second budget at the given frame rate. A runnable N-second
+snippet lives in [`examples/`](examples/).
+
+A `GeneratorOption` picks how each second reaches the screen — the three CTA-608
+caption modes, each with a different bargain between *when* the caption is complete
+and *what the viewer sees on the way there*:
+
+| mode | option | each second |
+|---|---|---|
+| **pop-on** | *(default)* | built invisibly in non-displayed memory, flipped on whole by one `EOC` |
+| **paint-on** | `WithPaintOn()` | cleared, then written onto the screen two characters per frame |
+| **roll-up** | `WithRollUp(rows)` | window scrolls up, the new lines typed onto the base row |
+
+**Pop-on** (the default) is frame-accurate and zero-lag: the caption is built into
+non-displayed memory during a second and flipped on with a single `EOC` on that
+second's **last frame**, the flip pair scheduled eligible at exactly the flip time.
+Nothing is visible until it is all visible.
 
 **`WithPaintOn()` types the caption out instead.** The generator then uses
 **paint-on**: each second opens with an `EDM` that clears the screen on its first
@@ -383,13 +395,13 @@ frame 22: b0 b0   "00"           complete — it now stands until the next secon
 
 The default two lines take ~23 pairs, so at 30 fps the clock is written over
 **0.77 s** of each second and stands for the rest; at 60 fps it is 0.38 s of the
-second. `Overran()` reports a caption that cannot be written within its second —
-paint-on is the tighter budget of the two, since the clear costs a pair and the
-next second's clear is what ends this one. Each second is painted from a clean
-screen and re-asserts `RDC`, so a decoder joining mid-stream is correct from the
-next second boundary. The trade-off is the mirror of pop-on's: pop-on hides the
-build and shows a whole caption late, paint-on shows every pair of progress but
-the text is incomplete for part of each second.
+second. `Overran()` reports a caption that cannot be written within its second — a
+tighter budget than pop-on's, since the clear costs a pair and the next second's
+clear is what ends this one. Each second is painted from a clean screen and
+re-asserts `RDC`, so a decoder joining mid-stream is correct from the next second
+boundary. The trade-off is the mirror of pop-on's: pop-on hides the build and shows
+a whole caption late, paint-on shows every pair of progress but the text is
+incomplete for part of each second.
 
 **`WithRollUp(rows)` scrolls instead of clearing.** Roll-up is the mode live
 captioning uses, and it types its text out the same way paint-on does — the
@@ -427,6 +439,13 @@ per unit** — a DASH segment, a MoQ group — instead of one call per frame, wh
 stateless server generating segments on demand needs. It splits the unit into
 `N = NumCues(unitDurMS, targetPeriodMS)` equal cue slices, asks a `CueContentFunc` for each
 slice's lines, and returns one `schedule.Frame` per video frame.
+
+There is one builder per caption mode, all taking the same `Unit` and `CueContentFunc`:
+`BuildUnitCues` (pop-on), [`BuildUnitPaintCues`](#paint-on-cues-buildunitpaintcues) and
+[`BuildUnitRollUpCues`](#roll-up-cues-buildunitrollupcues). They differ only in how a cue
+reaches the screen and in what a unit owes the units around it —
+`generate.WallClockContent(cfg, originMS)` renders the same wall clock the `Generator` does,
+if that is the caption you want served per unit.
 
 A unit is described by a `Unit`, whose three fields are **independent inputs**:
 
@@ -557,9 +576,9 @@ with a frame to spare is a returned error.
 
 ### Roll-up cues (`BuildUnitRollUpCues`)
 
-`generate.BuildUnitRollUpCues` is the third variant: same `Unit`, same `CueContentFunc`,
-plus the window size. Each cue is the `RU2/3/4` mode entry followed by a `CR` and the
-typed text for each of its lines, eligible at its slice's first frame.
+`generate.BuildUnitRollUpCues` is the roll-up counterpart: same `Unit`, same
+`CueContentFunc`, plus the window size. Each cue is the `RU2/3/4` mode entry followed by a
+`CR` and the typed text for each of its lines, eligible at its slice's first frame.
 
 ```go
 frames, err := generate.BuildUnitRollUpCues(fps, unit, 1000, 3, content)               // reset (default)
@@ -776,9 +795,9 @@ Each tool supports `--version` (stamped from git via `-ldflags` at build time).
 ### `go608-clock`
 
 The first-milestone demo. It runs the whole encode spine — `generate.NextFrame`
-→ `carriage.FrameSEINALU` → splice the bare SEI NAL before the first VCL NAL of
-each frame — and writes a fragmented mp4 whose frames carry the wall-clock
-caption.
+(or, under `-unit-mode`, `generate.BuildUnit*Cues`) → `carriage.FrameSEINALU` →
+splice the bare SEI NAL before the first VCL NAL of each frame — and writes a
+fragmented mp4 whose frames carry the wall-clock caption.
 
 ```sh
 # Self-contained synthetic AVC fMP4 (placeholder video, real 608 SEI):
@@ -824,11 +843,15 @@ reaches the two cross-unit policies that exist only there:
 | `carry` | `-mode roll-up*` | `WithRollUpCarry`: keep the roll-up window across unit boundaries instead of clearing it |
 
 A mismatch (`-unit-mode carry` with pop-on, say) is an error rather than a silently
-ignored flag. Without `-i` the output is a structurally valid fMP4
-with placeholder video payloads — ideal for round-tripping the 608; pass `-i` to
-caption decodable video. If a line set can't build within one second at the
-chosen frame rate, the tool reports an overrun. The shared mp4 read/write and
-NAL-splice glue lives in `internal/mp4io` (reused by the other mp4 tools).
+ignored flag.
+
+Without `-i` the output is a structurally valid fMP4 with placeholder video payloads
+— ideal for round-tripping the 608; pass `-i` to caption decodable video. If a line
+set can't be written within one second at the chosen frame rate, the tool reports an
+overrun — a warning from the continuous generator, whose guard is sticky, and a hard
+error under `-unit-mode`, where each unit's builder refuses content that will not fit
+its slice. The shared mp4 read/write and NAL-splice glue lives in `internal/mp4io`
+(reused by the other mp4 tools).
 
 ### `go608-info`
 
