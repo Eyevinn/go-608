@@ -23,7 +23,9 @@
 // off-screen and flips it on whole at the second boundary; paint-on clears the
 // screen on the boundary and writes the caption straight onto it, two characters
 // per frame, so the text visibly types itself out and then stands until the next
-// second's clear.
+// second's clear; roll-up[2-4] scrolls a 2-4 row window up instead of clearing and
+// types each second's lines onto the bottom row, leaving the previous seconds
+// visible above — the mode live captioning uses.
 //
 // Usage:
 //
@@ -31,6 +33,7 @@
 //	go608-clock -i in.mp4 -o out.mp4 -fps 25
 //	go608-clock -o out.mp4 -line 14:white:utc -line 15:yellow:media
 //	go608-clock -o out.mp4 -mode paint-on -seconds 5
+//	go608-clock -o out.mp4 -mode roll-up3 -seconds 5
 //	go608-clock -version
 package main
 
@@ -128,15 +131,24 @@ type options struct {
 // genOptions turns the -mode flag into the generator options, rejecting any other
 // value. "pop-on" builds each second off-screen and flips it on whole; "paint-on"
 // clears at the second boundary and writes the caption onto the screen as it goes,
-// so the text visibly types itself out.
+// so the text visibly types itself out; "roll-up[2-4]" scrolls the window up each
+// second and types the new lines onto the bottom row, keeping the previous seconds
+// visible above (the mode live captioning uses). Plain "roll-up" is a two-row
+// window, which is what the default two-line caption fills.
 func (o *options) genOptions() ([]generate.GeneratorOption, error) {
 	switch o.mode {
 	case "", "pop-on":
 		return nil, nil
 	case "paint-on":
 		return []generate.GeneratorOption{generate.WithPaintOn()}, nil
+	case "roll-up", "roll-up2", "roll-up3", "roll-up4":
+		rows := 2
+		if n := strings.TrimPrefix(o.mode, "roll-up"); n != "" {
+			rows, _ = strconv.Atoi(n) // one of 2, 3, 4 by the case above
+		}
+		return []generate.GeneratorOption{generate.WithRollUp(rows)}, nil
 	default:
-		return nil, fmt.Errorf("-mode %q must be \"pop-on\" or \"paint-on\"", o.mode)
+		return nil, fmt.Errorf("-mode %q must be \"pop-on\", \"paint-on\" or \"roll-up[2-4]\"", o.mode)
 	}
 }
 
@@ -155,7 +167,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.Float64Var(&opts.seconds, "seconds", 3, "synthetic-mode duration in seconds (ignored with -i)")
 	fs.StringVar(&opts.start, "start", "", "wall-clock start time (RFC3339); default: now (UTC)")
 	fs.StringVar(&opts.mode, "mode", "pop-on",
-		"caption mode: \"pop-on\" (flip each second on whole) or \"paint-on\" (type it out character by character)")
+		"caption mode: \"pop-on\" (flip each second on whole), \"paint-on\" (type it out onto a cleared "+
+			"screen) or \"roll-up[2-4]\" (scroll the window up and type onto the bottom row)")
 	fs.Var(&opts.lines, "line", "caption line \"row:color:kind\" (repeatable; default: 14:white:utc, 15:yellow:media)")
 
 	err := fs.Parse(args[1:])

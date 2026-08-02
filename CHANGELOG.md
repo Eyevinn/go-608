@@ -25,7 +25,24 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   `BuildUnitPaintCues` needs no `WithFlipAtCueStart` counterpart. A caption that cannot be
   written inside its second/slice is reported the same way as a pop-on overrun.
 
-- `go608-clock -mode pop-on|paint-on` (default `pop-on`) selects between the two.
+- Progressive **roll-up** generation, which types its lines out the same way but scrolls the
+  window instead of clearing it, so previous cues stay visible above the base row:
+
+  ```go
+  g := generate.NewGenerator(fps, cfg, generate.WithRollUp(3))                    // per-frame wall clock
+  frames, err := generate.BuildUnitRollUpCues(fps, u, 1000, 3, content)           // per segment / group
+  frames, err := generate.BuildUnitRollUpCues(fps, u, 1000, 3, content,
+      generate.WithRollUpCarry())                                                 // keep the window
+  ```
+
+  Each cue is the `RU2/3/4` mode entry, then a `CR` and the typed text per line, written in
+  `Row` order so the window ends up laid out as the rows declare. `BuildUnitRollUpCues`
+  clears the window on the unit's first frame by default, which makes the unit
+  self-contained in display as well as data; `WithRollUpCarry` keeps the previous unit's
+  lines and scrolls them instead. `generate.RollUpOption` is deliberately separate from
+  `UnitOption` — `WithFlipAtCueStart` is a pop-on concept and must not be passable.
+
+- `go608-clock -mode pop-on|paint-on|roll-up[2-4]` (default `pop-on`) selects between them.
 
 - `generate.GeneratorOption`; `NewGenerator` now takes optional `GeneratorOption`s. Existing
   two-argument calls are unaffected.

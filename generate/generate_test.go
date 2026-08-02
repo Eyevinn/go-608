@@ -8,6 +8,7 @@ import (
 
 	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/cta608"
+	"github.com/Eyevinn/go-608/schedule"
 )
 
 var startWall = time.Date(2026, 7, 20, 14, 23, 44, 0, time.UTC).UnixMilli()
@@ -212,6 +213,83 @@ func TestGeneratorPaintOn(t *testing.T) {
 		if done-start >= 29 {
 			t.Errorf("second %d completed at frame %d, leaving no time on screen", sec, done)
 		}
+	}
+}
+
+// TestGeneratorRollUp drives the roll-up generator for three seconds at 30 fps: each
+// second scrolls the window and types its two lines onto the base row, and the
+// previous second stays visible above with nothing ever erased.
+func TestGeneratorRollUp(t *testing.T) {
+	const fps = 30.0
+	const base, rows = 15, 3
+	g := NewGenerator(fps, DefaultConfig(), WithRollUp(rows))
+
+	frames := make([]schedule.Frame, 3*30)
+	for frame := range frames {
+		frames[frame] = g.NextFrame(wallAt(frame, fps))
+		if len(frames[frame].Field2) != 0 {
+			t.Fatalf("frame %d field2 non-empty (CC1-only expected)", frame)
+		}
+	}
+	if g.Overran() {
+		t.Error("default two-line config overran the roll-up budget at 30 fps")
+	}
+	// No erase anywhere: roll-up transitions by scrolling, so EDM (94 2c) never appears.
+	for i, f := range frames {
+		if len(f.Field1) == 2 && f.Field1[0] == 0x94 && f.Field1[1] == 0x2c {
+			t.Errorf("frame %d carries an EDM; roll-up should scroll, not erase", i)
+		}
+	}
+
+	trace := rollTrace(t, frames, base, rows)
+	// Settled window at the end of each second: the two lines of that second, with the
+	// previous second's bottom line pushed up to the top row.
+	cases := []struct {
+		frame int
+		want  []string
+	}{
+		{29, []string{"", "2026-07-20T14:23:44Z", "MEDIA 00:00:00"}},
+		{59, []string{"MEDIA 00:00:00", "2026-07-20T14:23:45Z", "MEDIA 00:00:01"}},
+		{89, []string{"MEDIA 00:00:01", "2026-07-20T14:23:46Z", "MEDIA 00:00:02"}},
+	}
+	for _, c := range cases {
+		got := trace[c.frame]
+		for r := range got {
+			if got[r] != c.want[r] {
+				t.Errorf("frame %d window = %q, want %q", c.frame, got, c.want)
+				break
+			}
+		}
+		t.Logf("frame %d window: %q", c.frame, got)
+	}
+
+	// The base row only ever extends by a pair or is emptied by a scroll.
+	for i := 1; i < len(trace); i++ {
+		prev, cur := trace[i-1][rows-1], trace[i][rows-1]
+		if cur == "" || (strings.HasPrefix(cur, prev) && len(cur)-len(prev) <= 2) {
+			continue
+		}
+		t.Fatalf("frame %d base row went %q -> %q, want a ≤2-character extension or a scroll", i, prev, cur)
+	}
+}
+
+// TestGeneratorRollUpBudget records where roll-up's extra pairs per line bite: the
+// default two lines are exactly the 25 fps budget, so anything more needs a faster
+// rate. This is the tightest of the three modes.
+func TestGeneratorRollUpBudget(t *testing.T) {
+	g := NewGenerator(25, DefaultConfig(), WithRollUp(2))
+	g.NextFrame(wallAt(0, 25))
+	if g.Overran() {
+		t.Error("default two-line config should just fit the 25 fps roll-up budget")
+	}
+
+	big := Config{Lines: []LineSpec{
+		{Row: 13, Kind: "utc"}, {Row: 14, Kind: "utc"}, {Row: 15, Kind: "media"},
+	}}
+	g2 := NewGenerator(25, big, WithRollUp(4))
+	g2.NextFrame(wallAt(0, 25))
+	if !g2.Overran() {
+		t.Error("three-line config should overrun the 25 fps roll-up budget")
 	}
 }
 

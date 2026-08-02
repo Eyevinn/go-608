@@ -52,7 +52,8 @@ type Generator struct {
 	frameDurMS  float64
 	buildBudget int // field-1 pairs that fit before the flip frame: round(fps)-1
 	cfg         Config
-	paintOn     bool // paint the caption progressively instead of popping it on
+	mode        cta608.Mode // PopOn (default), PaintOn or RollUp
+	rollUpRows  int         // roll-up window rows (2..4), RollUp only
 
 	sched *schedule.Scheduler
 	enc   cta608.Encoder
@@ -86,7 +87,33 @@ type GeneratorOption func(*Generator)
 // it), and it is tighter here: the clear costs a pair and nothing may spill past
 // the second, since the next second's clear is what ends this one.
 func WithPaintOn() GeneratorOption {
-	return func(g *Generator) { g.paintOn = true }
+	return func(g *Generator) { g.mode = cta608.PaintOn; g.rollUpRows = 0 }
+}
+
+// WithRollUp switches the generator to roll-up in a window of rows rows (clamped
+// to 2..4) — the mode live captioning actually uses. Each second scrolls the
+// window up and types its new line onto the bottom (base) row, so the previous
+// seconds stay visible above it and age upward off the window.
+//
+// Like paint-on, roll-up writes to the displayed screen, so the caption types
+// itself out two characters per frame. What differs is the boundary between
+// seconds: there is no clear. A second is CR (the scroll) followed by the new
+// line, and the history in the rows above is the decoder's, never retransmitted.
+// A receiver joining mid-stream therefore starts with a partly filled window that
+// completes after rows-1 seconds — which is exactly what tuning into a live
+// broadcast looks like.
+//
+// Each configured line becomes its own scroll step, written in Row order so the
+// window ends up laid out as the rows declare: DefaultConfig's rows 14 and 15
+// scroll the UTC line to 14 and leave the media line on 15, the same picture
+// pop-on and paint-on produce. The largest configured Row is the base row.
+//
+// Roll-up costs two extra pairs per line over paint-on (the mode entry, once per
+// second, and each line's CR), which matters at low frame rates: the default two
+// lines are 24 pairs, exactly the 25 fps budget, so any more content needs a
+// higher rate. Overran reports the overflow as always.
+func WithRollUp(rows int) GeneratorOption {
+	return func(g *Generator) { g.mode = cta608.RollUp; g.rollUpRows = clampRows(rows) }
 }
 
 // NewGenerator returns a Generator for the given frame rate and content config.
@@ -141,12 +168,16 @@ func (g *Generator) Overran() bool { return g.overran }
 // frame, and the terminating EOC eligible at the flip time (the second's last
 // frame) so the flip is frame-accurate.
 //
-// Under WithPaintOn it instead paints the caption for sec itself, from nowMS —
-// see paintSecond.
+// Under WithPaintOn / WithRollUp it instead writes the caption for sec itself onto
+// the displayed screen, from nowMS — see paintSecond and rollSecond.
 func (g *Generator) buildSecond(sec, nowMS int64) {
 	mediaMS := int64(math.Round(float64(g.frame) * g.frameDurMS))
-	if g.paintOn {
+	switch g.mode {
+	case cta608.PaintOn:
 		g.paintSecond(sec, mediaMS, nowMS)
+		return
+	case cta608.RollUp:
+		g.rollSecond(sec, mediaMS, nowMS)
 		return
 	}
 	block := g.block(sec+1, mediaMS+1000)
@@ -175,6 +206,24 @@ func (g *Generator) buildSecond(sec, nowMS int64) {
 // would only put the coming second's text on screen during this one.
 func (g *Generator) paintSecond(sec, mediaMS, nowMS int64) {
 	toks := append([]cta608.Token{cta608.Command{Op: cta608.EDM}}, paintOnTokens(g.lines(sec, mediaMS))...)
+	if serializedPairs(toks) > g.buildBudget {
+		g.overran = true
+	}
+	g.sched.Push(schedule.TimedTokens{TimeMS: nowMS, Field: 1, Tokens: toks})
+}
+
+// rollSecond schedules second sec's caption as one roll-up transition eligible at
+// nowMS: the mode entry, then a CR and its text for each configured line. It drains
+// one pair per frame, so the window scrolls on the second's first frames and each
+// line then types itself onto the base row.
+//
+// Nothing is erased between seconds — the scroll is the transition, and the rows
+// above the base row hold the previous seconds, which are never retransmitted.
+func (g *Generator) rollSecond(sec, mediaMS, nowMS int64) {
+	toks := rollUpTokens(g.lines(sec, mediaMS), g.rollUpRows)
+	if len(toks) == 0 {
+		return
+	}
 	if serializedPairs(toks) > g.buildBudget {
 		g.overran = true
 	}

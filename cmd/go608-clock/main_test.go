@@ -37,7 +37,14 @@ func TestRun(t *testing.T) {
 		{desc: "bad start", args: []string{appName, "-o", out, "-start", "not-a-time"}, err: true},
 		{desc: "bad line", args: []string{appName, "-o", out, "-line", "99:white:utc"}, err: true},
 		{desc: "fps out of caption range", args: []string{appName, "-o", out, "-fps", "15"}, err: true},
-		{desc: "bad mode", args: []string{appName, "-o", out, "-mode", "roll-up"}, err: true},
+		{desc: "bad mode", args: []string{appName, "-o", out, "-mode", "crawl"}, err: true},
+		{desc: "bad roll-up window", args: []string{appName, "-o", out, "-mode", "roll-up5"}, err: true},
+		{
+			desc: "roll-up ok",
+			args: []string{appName, "-o", out, "-fps", "30", "-seconds", "1", "-start", startStr,
+				"-mode", "roll-up3"},
+			err: false,
+		},
 		{
 			desc: "synthetic ok",
 			args: []string{appName, "-o", out, "-fps", "30", "-seconds", "1", "-start", startStr},
@@ -158,6 +165,45 @@ func TestSyntheticPaintOn(t *testing.T) {
 		if !strings.HasPrefix(last.media, "MEDIA ") {
 			t.Errorf("second %d media = %q, want a MEDIA hh:mm:ss line", sec, last.media)
 		}
+	}
+}
+
+// TestSyntheticRollUp checks the -mode roll-up path end to end: the window scrolls
+// each second and the new lines are typed onto the bottom row, with the previous
+// second still visible above and nothing ever erased.
+func TestSyntheticRollUp(t *testing.T) {
+	start, _ := time.Parse(time.RFC3339, startStr)
+	out := filepath.Join(t.TempDir(), "roll.mp4")
+	args := []string{appName, "-o", out, "-fps", "30", "-seconds", "3", "-start", startStr, "-mode", "roll-up3"}
+	if err := run(args, io.Discard); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+
+	flips := decodeFlips(t, data, carriage.CodecAVC)
+	if len(flips) < 30 {
+		t.Fatalf("got %d screen changes in 3 s of roll-up, want many (one per pair)", len(flips))
+	}
+	// The last state of second 1 has that second's lines on rows 14/15 and second 0's
+	// bottom line scrolled up to row 13 — the history roll-up keeps and never resends.
+	var last flip
+	for _, fl := range flips {
+		if fl.frame >= 30 && fl.frame < 60 {
+			last = fl
+		}
+	}
+	wantUTC := time.Unix(start.Unix()+1, 0).UTC().Format("2006-01-02T15:04:05Z")
+	if last.rows[14] != wantUTC {
+		t.Errorf("row 14 = %q at the end of second 1, want %q", last.rows[14], wantUTC)
+	}
+	if !strings.HasPrefix(last.rows[15], "MEDIA ") {
+		t.Errorf("row 15 = %q, want the media line on the base row", last.rows[15])
+	}
+	if last.rows[13] == "" {
+		t.Errorf("row 13 empty, want second 0's last line scrolled up (rows=%v)", last.rows)
 	}
 }
 
