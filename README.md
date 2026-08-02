@@ -796,6 +796,11 @@ go608-clock -o clock.mp4 -mode paint-on -seconds 5
 
 # Roll-up: scroll a 3-row window each second and type onto the bottom row:
 go608-clock -o clock.mp4 -mode roll-up3 -seconds 5
+
+# Per-unit generation (the segment-server API) with 2 s units, and its cross-unit
+# policies: pop-on flipping on the cue boundary, roll-up keeping its window:
+go608-clock -o clock.mp4 -unit-mode cue-start -unit-seconds 2 -seconds 6
+go608-clock -o clock.mp4 -mode roll-up3 -unit-mode carry -unit-seconds 2
 ```
 
 Flags: `-o` (output, required), `-i` (input fMP4; omit for synthetic frames),
@@ -803,7 +808,23 @@ Flags: `-o` (output, required), `-i` (input fMP4; omit for synthetic frames),
 `-seconds` (synthetic duration), `-start` (RFC3339 wall-clock start; default now
 UTC), `-line` (repeatable line config; default row 14 UTC white, row 15 media
 yellow), `-mode` (`pop-on`, the default, `paint-on`, or `roll-up[2-4]` — see
-[Wall-clock generation](#wall-clock-generation-first-milestone)), and `-version`. Without `-i` the output is a structurally valid fMP4
+[Wall-clock generation](#wall-clock-generation-first-milestone)), `-unit-mode` +
+`-unit-seconds` (below), and `-version`.
+
+**`-unit-mode` drives the per-unit API instead of the frame-by-frame `Generator`**, so
+the demo exercises what a stateless segment server calls — `BuildUnitCues` and its
+paint-on and roll-up siblings — over units of `-unit-seconds` (default 2). It also
+reaches the two cross-unit policies that exist only there:
+
+| `-unit-mode` | with | effect |
+|---|---|---|
+| *(unset)* | any | continuous `Generator`, one call per frame |
+| `default` | any | per-unit, each unit's cues placed inside it |
+| `cue-start` | `-mode pop-on` | `WithFlipAtCueStart`: each flip on its cue boundary, the build carried in the previous unit's tail |
+| `carry` | `-mode roll-up*` | `WithRollUpCarry`: keep the roll-up window across unit boundaries instead of clearing it |
+
+A mismatch (`-unit-mode carry` with pop-on, say) is an error rather than a silently
+ignored flag. Without `-i` the output is a structurally valid fMP4
 with placeholder video payloads — ideal for round-tripping the 608; pass `-i` to
 caption decodable video. If a line set can't build within one second at the
 chosen frame rate, the tool reports an overrun. The shared mp4 read/write and

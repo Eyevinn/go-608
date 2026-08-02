@@ -239,8 +239,31 @@ func (g *Generator) block(wallSec, mediaMS int64) cta608.CaptionBlock {
 // lines renders the configured lines, each centered, for the given wall-clock
 // second and media time. Lines whose content is empty are dropped.
 func (g *Generator) lines(wallSec, mediaMS int64) []cta608.Line {
-	lines := make([]cta608.Line, 0, len(g.cfg.Lines))
-	for _, ls := range g.cfg.Lines {
+	return configLines(g.cfg, wallSec, mediaMS)
+}
+
+// WallClockContent returns a CueContentFunc rendering cfg's lines — the same
+// wall-clock caption a Generator produces — so the per-unit builders can serve it a
+// unit at a time. An empty Config uses DefaultConfig.
+//
+// A cue's UTC line comes from its own cueStartMS, and its media line from
+// cueStartMS - originMS, so originMS is the wall-clock time of the stream's first
+// frame (the same instant a Generator is first called with). Everything else the
+// content depends on arrives as an argument, so one returned func serves every unit.
+func WallClockContent(cfg Config, originMS int64) CueContentFunc {
+	if len(cfg.Lines) == 0 {
+		cfg = DefaultConfig()
+	}
+	return func(_ Unit, _ int, cueStartMS int64) UnitCue {
+		return UnitCue{Lines: configLines(cfg, cueStartMS/1000, cueStartMS-originMS)}
+	}
+}
+
+// configLines renders a Config's lines, each centered, for the given wall-clock
+// second and media time. Lines whose content is empty are dropped.
+func configLines(cfg Config, wallSec, mediaMS int64) []cta608.Line {
+	lines := make([]cta608.Line, 0, len(cfg.Lines))
+	for _, ls := range cfg.Lines {
 		text := content(ls.Kind, wallSec, mediaMS)
 		if text == "" {
 			continue

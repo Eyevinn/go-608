@@ -39,6 +39,33 @@ func TestRun(t *testing.T) {
 		{desc: "fps out of caption range", args: []string{appName, "-o", out, "-fps", "15"}, err: true},
 		{desc: "bad mode", args: []string{appName, "-o", out, "-mode", "crawl"}, err: true},
 		{desc: "bad roll-up window", args: []string{appName, "-o", out, "-mode", "roll-up5"}, err: true},
+		{desc: "bad unit-mode", args: []string{appName, "-o", out, "-unit-mode", "bogus"}, err: true},
+		{
+			desc: "cue-start needs pop-on",
+			args: []string{appName, "-o", out, "-unit-mode", "cue-start", "-mode", "paint-on"},
+			err:  true,
+		},
+		{
+			desc: "carry needs roll-up",
+			args: []string{appName, "-o", out, "-unit-mode", "carry", "-mode", "pop-on"},
+			err:  true,
+		},
+		{
+			desc: "unit-seconds must be positive",
+			args: []string{appName, "-o", out, "-unit-mode", "default", "-unit-seconds", "0"},
+			err:  true,
+		},
+		{
+			desc: "unit-seconds shorter than a frame",
+			args: []string{appName, "-o", out, "-unit-mode", "default", "-unit-seconds", "0.001"},
+			err:  true,
+		},
+		{
+			desc: "unit mode ok",
+			args: []string{appName, "-o", out, "-fps", "30", "-seconds", "4", "-start", startStr,
+				"-unit-mode", "default", "-unit-seconds", "2"},
+			err: false,
+		},
 		{
 			desc: "roll-up ok",
 			args: []string{appName, "-o", out, "-fps", "30", "-seconds", "1", "-start", startStr,
@@ -204,6 +231,152 @@ func TestSyntheticRollUp(t *testing.T) {
 	}
 	if last.rows[13] == "" {
 		t.Errorf("row 13 empty, want second 0's last line scrolled up (rows=%v)", last.rows)
+	}
+}
+
+// clockMP4 runs the tool into a temp file and returns the bytes.
+func clockMP4(t *testing.T, extra ...string) []byte {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "clock.mp4")
+	args := append([]string{appName, "-o", out, "-fps", "30", "-seconds", "4", "-start", startStr}, extra...)
+	if err := run(args, io.Discard); err != nil {
+		t.Fatalf("run %v: %v", extra, err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	return data
+}
+
+// TestUnitModeCueStartFlipsOnBoundaries is the regression test for the per-unit
+// pop-on path: with -unit-mode cue-start every flip must land on a cue boundary
+// (frames 30, 60, 90 at 30 fps), including the flip at frame 60 that opens the second
+// unit — its build was transmitted in the first unit's tail.
+//
+// The bug this pins: WithFlipAtCueStart is a contract between neighbouring units, so a
+// unit whose successor is not given the option transmits that successor's build a
+// second time and the flip lands a whole build late (frame 83 rather than 60 here). It
+// was caught by decoding the output with ffmpeg, not by the library's own tests.
+func TestUnitModeCueStartFlipsOnBoundaries(t *testing.T) {
+	data := clockMP4(t, "-unit-mode", "cue-start", "-unit-seconds", "2")
+
+	flips := decodeFlips(t, data, carriage.CodecAVC)
+	// Unit 0's first cue has no preceding unit to carry its build, so its EOC flips an
+	// empty buffer and nothing shows until the next cue — the documented cold start.
+	want := []struct {
+		frame int
+		utc   string
+	}{
+		{30, "2026-07-20T12:00:01Z"},
+		{60, "2026-07-20T12:00:02Z"}, // built in unit 0's tail, flipped by unit 1
+		{90, "2026-07-20T12:00:03Z"},
+	}
+	if len(flips) != len(want) {
+		for _, fl := range flips {
+			t.Logf("flip @frame %d: %q / %q", fl.frame, fl.utc, fl.media)
+		}
+		t.Fatalf("got %d flips, want %d (one per cue boundary)", len(flips), len(want))
+	}
+	for i, w := range want {
+		if flips[i].frame != w.frame || flips[i].utc != w.utc {
+			t.Errorf("flip %d = frame %d %q, want frame %d %q", i, flips[i].frame, flips[i].utc, w.frame, w.utc)
+		}
+	}
+}
+
+// TestUnitModeRollUpResetVsCarry checks the two cross-unit roll-up policies through
+// the whole tool: reset clears the window on the second unit's first frame, carry
+// keeps it and scrolls instead.
+func TestUnitModeRollUpResetVsCarry(t *testing.T) {
+	const boundary = 60 // frames per 2 s unit at 30 fps
+
+	// emptyAt reports whether the screen is blank at any change on the given frame.
+	emptyAt := func(flips []flip, frame int) bool {
+		for _, fl := range flips {
+			if fl.frame == frame && len(fl.rows) == 0 {
+				return true
+			}
+		}
+		return false
+	}
+	// filledAt returns the row count at the last change at or before frame.
+	filledAt := func(flips []flip, frame int) int {
+		n := 0
+		for _, fl := range flips {
+			if fl.frame <= frame {
+				n = len(fl.rows)
+			}
+		}
+		return n
+	}
+
+	reset := decodeFlips(t, clockMP4(t, "-mode", "roll-up3", "-unit-mode", "default", "-unit-seconds", "2"),
+		carriage.CodecAVC)
+	if !emptyAt(reset, boundary) {
+		t.Errorf("reset: no cleared screen on frame %d, want the window reset at the unit boundary", boundary)
+	}
+
+	carry := decodeFlips(t, clockMP4(t, "-mode", "roll-up3", "-unit-mode", "carry", "-unit-seconds", "2"),
+		carriage.CodecAVC)
+	if emptyAt(carry, boundary) {
+		t.Errorf("carry: screen cleared on frame %d, want the window kept across the unit boundary", boundary)
+	}
+	if n := filledAt(carry, boundary+1); n < 2 {
+		t.Errorf("carry: %d rows shown just after the boundary, want the previous unit's lines scrolled up", n)
+	}
+}
+
+// TestUnitModePaintOn checks the per-unit paint-on path end to end: the caption is
+// typed out within each cue and every second gets its own.
+func TestUnitModePaintOn(t *testing.T) {
+	start, _ := time.Parse(time.RFC3339, startStr)
+	flips := decodeFlips(t, clockMP4(t, "-mode", "paint-on", "-unit-mode", "default", "-unit-seconds", "2"),
+		carriage.CodecAVC)
+	if len(flips) < 40 {
+		t.Fatalf("got %d screen changes in 4 s of per-unit paint-on, want many (one per pair)", len(flips))
+	}
+	for sec := 0; sec < 4; sec++ {
+		var last flip
+		for _, fl := range flips {
+			if fl.frame >= sec*30 && fl.frame < (sec+1)*30 {
+				last = fl
+			}
+		}
+		want := time.Unix(start.Unix()+int64(sec), 0).UTC().Format("2006-01-02T15:04:05Z")
+		if last.utc != want {
+			t.Errorf("second %d ends showing %q, want %q", sec, last.utc, want)
+		}
+	}
+}
+
+// TestUnitModeMatchesGeneratorPopOn pins the two APIs against each other: the per-unit
+// pop-on builder with its flips on cue boundaries shows the same captions as the
+// continuous generator, which also flips on the second boundary. The wire bytes differ
+// (the unit path splits at unit boundaries), the captions do not.
+func TestUnitModeMatchesGeneratorPopOn(t *testing.T) {
+	cont := decodeFlips(t, clockMP4(t), carriage.CodecAVC)
+	unit := decodeFlips(t, clockMP4(t, "-unit-mode", "cue-start", "-unit-seconds", "2"), carriage.CodecAVC)
+
+	// The continuous generator flips at the last frame of each second (29, 59, 89) for
+	// the *next* second; the per-unit cue-start path flips on the boundary (30, 60, 90)
+	// for the second it names. Same captions, one frame apart.
+	//
+	// The continuous run has one flip more: on its last frame it flips the caption for
+	// the second after the run ends (pop-on builds ahead), which the per-unit run has no
+	// slice for. Compare the flips they share.
+	if len(cont) < len(unit) || len(unit) == 0 {
+		t.Fatalf("continuous gave %d flips, per-unit %d", len(cont), len(unit))
+	}
+	for i := range unit {
+		if cont[i].utc != unit[i].utc || cont[i].media != unit[i].media {
+			t.Errorf("flip %d: continuous %q/%q vs per-unit %q/%q",
+				i, cont[i].utc, cont[i].media, unit[i].utc, unit[i].media)
+		}
+		if unit[i].frame != cont[i].frame+1 {
+			t.Errorf("flip %d: per-unit frame %d, continuous %d (want one frame later)",
+				i, unit[i].frame, cont[i].frame)
+		}
 	}
 }
 

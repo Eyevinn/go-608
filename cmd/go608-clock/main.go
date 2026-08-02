@@ -27,6 +27,14 @@
 // types each second's lines onto the bottom row, leaving the previous seconds
 // visible above — the mode live captioning uses.
 //
+// -unit-mode switches from the continuous generator (one call per frame) to the
+// per-unit API (one call per DASH segment / MoQ group, generate.BuildUnitCues and its
+// paint-on and roll-up siblings), with units of -unit-seconds. It exists so the demo
+// covers the API a stateless segment server uses, including the cross-unit policies
+// that only exist there: "cue-start" moves each pop-on flip onto its cue boundary,
+// carrying the build in the previous unit's tail, and "carry" keeps the roll-up window
+// across unit boundaries instead of clearing it on each unit's first frame.
+//
 // Usage:
 //
 //	go608-clock -o out.mp4 -fps 30 -seconds 5
@@ -34,6 +42,8 @@
 //	go608-clock -o out.mp4 -line 14:white:utc -line 15:yellow:media
 //	go608-clock -o out.mp4 -mode paint-on -seconds 5
 //	go608-clock -o out.mp4 -mode roll-up3 -seconds 5
+//	go608-clock -o out.mp4 -unit-mode cue-start -unit-seconds 2 -seconds 6
+//	go608-clock -o out.mp4 -mode roll-up3 -unit-mode carry -unit-seconds 2
 //	go608-clock -version
 package main
 
@@ -54,6 +64,7 @@ import (
 	"github.com/Eyevinn/go-608/generate"
 	"github.com/Eyevinn/go-608/internal"
 	"github.com/Eyevinn/go-608/internal/mp4io"
+	"github.com/Eyevinn/go-608/schedule"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
@@ -117,39 +128,101 @@ func (lf *lineFlag) config() generate.Config {
 	return generate.Config{Lines: lf.specs}
 }
 
+// Caption modes (-mode) and per-unit placement policies (-unit-mode).
+const (
+	modePopOn   = "pop-on"
+	modePaintOn = "paint-on"
+	modeRollUp  = "roll-up"
+
+	unitOff      = ""          // drive the continuous Generator, one call per frame
+	unitDefault  = "default"   // per-unit, each unit's cues placed inside it
+	unitCueStart = "cue-start" // pop-on only: generate.WithFlipAtCueStart
+	unitCarry    = "carry"     // roll-up only: generate.WithRollUpCarry
+
+	// cuePeriodMS is the per-unit caption refresh, matching the continuous
+	// generator's one-second clock.
+	cuePeriodMS = 1000
+)
+
 type options struct {
-	version bool
-	output  string
-	input   string
-	fps     float64
-	seconds float64
-	start   string
-	mode    string
-	lines   lineFlag
+	version     bool
+	output      string
+	input       string
+	fps         float64
+	seconds     float64
+	start       string
+	mode        string
+	unitMode    string
+	unitSeconds float64
+	lines       lineFlag
 }
 
-// genOptions turns the -mode flag into the generator options, rejecting any other
-// value. "pop-on" builds each second off-screen and flips it on whole; "paint-on"
-// clears at the second boundary and writes the caption onto the screen as it goes,
-// so the text visibly types itself out; "roll-up[2-4]" scrolls the window up each
-// second and types the new lines onto the bottom row, keeping the previous seconds
-// visible above (the mode live captioning uses). Plain "roll-up" is a two-row
-// window, which is what the default two-line caption fills.
-func (o *options) genOptions() ([]generate.GeneratorOption, error) {
+// captionMode parses -mode into a mode name and, for roll-up, its window size.
+// "pop-on" builds each second off-screen and flips it on whole; "paint-on" clears at
+// the second boundary and writes the caption onto the screen as it goes, so the text
+// visibly types itself out; "roll-up[2-4]" scrolls the window up each second and types
+// the new lines onto the bottom row, keeping the previous seconds visible above (the
+// mode live captioning uses). Plain "roll-up" is a two-row window, which is what the
+// default two-line caption fills.
+func (o *options) captionMode() (mode string, rows int, err error) {
 	switch o.mode {
-	case "", "pop-on":
-		return nil, nil
-	case "paint-on":
-		return []generate.GeneratorOption{generate.WithPaintOn()}, nil
+	case "", modePopOn:
+		return modePopOn, 0, nil
+	case modePaintOn:
+		return modePaintOn, 0, nil
 	case "roll-up", "roll-up2", "roll-up3", "roll-up4":
-		rows := 2
+		rows = 2
 		if n := strings.TrimPrefix(o.mode, "roll-up"); n != "" {
 			rows, _ = strconv.Atoi(n) // one of 2, 3, 4 by the case above
 		}
+		return modeRollUp, rows, nil
+	default:
+		return "", 0, fmt.Errorf("-mode %q must be %q, %q or \"roll-up[2-4]\"", o.mode, modePopOn, modePaintOn)
+	}
+}
+
+// genOptions turns -mode into the continuous Generator's options.
+func (o *options) genOptions() ([]generate.GeneratorOption, error) {
+	mode, rows, err := o.captionMode()
+	if err != nil {
+		return nil, err
+	}
+	switch mode {
+	case modePaintOn:
+		return []generate.GeneratorOption{generate.WithPaintOn()}, nil
+	case modeRollUp:
 		return []generate.GeneratorOption{generate.WithRollUp(rows)}, nil
 	default:
-		return nil, fmt.Errorf("-mode %q must be \"pop-on\", \"paint-on\" or \"roll-up[2-4]\"", o.mode)
+		return nil, nil
 	}
+}
+
+// checkUnitMode validates -unit-mode against the caption mode: each policy belongs to
+// the mode whose cross-unit behaviour it adjusts, so a mismatch is a mistake worth
+// naming rather than silently ignoring.
+func (o *options) checkUnitMode(mode string) error {
+	switch o.unitMode {
+	case unitOff:
+		return nil
+	case unitDefault:
+	case unitCueStart:
+		if mode != modePopOn {
+			return fmt.Errorf("-unit-mode %q applies to -mode %q only (it moves the pop-on flip); got -mode %q",
+				unitCueStart, modePopOn, o.mode)
+		}
+	case unitCarry:
+		if mode != modeRollUp {
+			return fmt.Errorf("-unit-mode %q applies to -mode roll-up only (it keeps the roll-up window); got -mode %q",
+				unitCarry, o.mode)
+		}
+	default:
+		return fmt.Errorf("-unit-mode %q must be %q, %q, %q or %q",
+			o.unitMode, unitOff, unitDefault, unitCueStart, unitCarry)
+	}
+	if o.unitSeconds <= 0 {
+		return fmt.Errorf("-unit-seconds must be positive, got %g", o.unitSeconds)
+	}
+	return nil
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -169,6 +242,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.mode, "mode", "pop-on",
 		"caption mode: \"pop-on\" (flip each second on whole), \"paint-on\" (type it out onto a cleared "+
 			"screen) or \"roll-up[2-4]\" (scroll the window up and type onto the bottom row)")
+	fs.StringVar(&opts.unitMode, "unit-mode", unitOff,
+		"generate one unit (DASH segment / MoQ group) at a time instead of frame by frame: "+
+			"\"default\", \"cue-start\" (pop-on flips on the cue boundary) or \"carry\" (roll-up keeps its window)")
+	fs.Float64Var(&opts.unitSeconds, "unit-seconds", 2, "unit duration in seconds (-unit-mode only)")
 	fs.Var(&opts.lines, "line", "caption line \"row:color:kind\" (repeatable; default: 14:white:utc, 15:yellow:media)")
 
 	err := fs.Parse(args[1:])
@@ -214,17 +291,20 @@ func run(args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	genOpts, err := opts.genOptions()
+	mode, _, err := opts.captionMode()
 	if err != nil {
+		return err
+	}
+	if err := opts.checkUnitMode(mode); err != nil {
 		return err
 	}
 
 	var buf bytes.Buffer
 	overran := false
 	if opts.input != "" {
-		overran, err = spliceInput(opts.input, opts.fps, start, opts.lines.config(), genOpts, &buf, w)
+		overran, err = spliceInput(opts.input, start, opts, &buf, w)
 	} else {
-		overran, err = writeSynthetic(opts.fps, opts.seconds, start, opts.lines.config(), genOpts, &buf, w)
+		overran, err = writeSynthetic(start, opts, &buf, w)
 	}
 	if err != nil {
 		return err
@@ -252,14 +332,126 @@ func parseStart(s string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
+// capSource yields the 608 payload for the i-th displayed frame. Both output paths
+// consume one, so the continuous generator and the per-unit builders are
+// interchangeable behind it — which is the point of -unit-mode: the same demo, the
+// same decode check, over either API.
+type capSource struct {
+	frame   func(i int) schedule.Frame
+	overran func() bool
+}
+
+// newCapSource builds the caption source for a run of nFrames frames: the continuous
+// Generator by default, or the per-unit builders under -unit-mode. nFrames must be
+// known up front for unit mode, since units tile the whole run.
+func newCapSource(start time.Time, o *options, nFrames int) (*capSource, error) {
+	startMS := start.UnixMilli()
+	if o.unitMode != unitOff {
+		frames, err := buildUnitFrames(startMS, o, nFrames)
+		if err != nil {
+			return nil, err
+		}
+		idle := schedule.Frame{CCCount: int(math.Round(600.0 / o.fps))}
+		return &capSource{
+			frame: func(i int) schedule.Frame {
+				if i < len(frames) {
+					return frames[i]
+				}
+				return idle // more samples than the run was sized for: no caption data
+			},
+			overran: func() bool { return false }, // unit mode reports overruns as errors
+		}, nil
+	}
+	genOpts, err := o.genOptions()
+	if err != nil {
+		return nil, err
+	}
+	gen := generate.NewGenerator(o.fps, o.lines.config(), genOpts...)
+	frameDurMS := 1000.0 / o.fps
+	// Drive the caption by frame index at the chosen rate (start + i*frameDur), so the
+	// lines stay in lockstep and the clock advances one second per second.
+	return &capSource{
+		frame: func(i int) schedule.Frame {
+			return gen.NextFrame(startMS + int64(math.Round(float64(i)*frameDurMS)))
+		},
+		overran: gen.Overran,
+	}, nil
+}
+
+// buildUnitFrames generates the whole run one unit at a time through the per-unit API
+// (generate.BuildUnitCues / BuildUnitPaintCues / BuildUnitRollUpCues) and concatenates
+// the results — the path a stateless segment server takes, one call per DASH segment or
+// MoQ group, exercised here so the demo can decode it back.
+//
+// Units tile the run from its first frame; a trailing partial unit is built as the
+// shorter unit it is. Each unit's caption is generated from the unit alone, exactly as a
+// server would, with generate.WallClockContent supplying the same lines the continuous
+// generator renders.
+func buildUnitFrames(startMS int64, o *options, nFrames int) ([]schedule.Frame, error) {
+	mode, rows, err := o.captionMode()
+	if err != nil {
+		return nil, err
+	}
+	perUnit := int(math.Round(o.unitSeconds * o.fps))
+	if perUnit < 1 {
+		return nil, fmt.Errorf("-unit-seconds %g is shorter than one frame at %g fps", o.unitSeconds, o.fps)
+	}
+	frameDurMS := 1000.0 / o.fps
+	content := generate.WallClockContent(o.lines.config(), startMS)
+	// unitAt describes the unit starting at frame i: its number, its wall-clock start
+	// and a full frame count. It is also asked for the unit *after* the run's last one,
+	// which WithFlipAtCueStart needs to name; only Nr and StartMS are read for that.
+	unitAt := func(i int) generate.Unit {
+		return generate.Unit{
+			Nr:      int64(i / perUnit),
+			StartMS: startMS + int64(math.Round(float64(i)*frameDurMS)),
+			Frames:  perUnit,
+		}
+	}
+
+	out := make([]schedule.Frame, 0, nFrames)
+	for i := 0; i < nFrames; i += perUnit {
+		u := unitAt(i)
+		if i+perUnit > nFrames {
+			u.Frames = nFrames - i // a trailing partial unit is built as the shorter unit it is
+		}
+		var frames []schedule.Frame
+		switch mode {
+		case modePaintOn:
+			frames, err = generate.BuildUnitPaintCues(o.fps, u, cuePeriodMS, content)
+		case modeRollUp:
+			var ropts []generate.RollUpOption
+			if o.unitMode == unitCarry {
+				ropts = append(ropts, generate.WithRollUpCarry())
+			}
+			frames, err = generate.BuildUnitRollUpCues(o.fps, u, cuePeriodMS, rows, content, ropts...)
+		default:
+			var uopts []generate.UnitOption
+			// Every unit gets the option, including the last: the option is a contract
+			// between neighbours — a unit's tail carries the *next* unit's first-cue
+			// build, and that unit must be built expecting it, or it transmits the build
+			// a second time and flips late. The final unit therefore preloads a build for
+			// a unit beyond the run, which nothing flips; that is what the live edge of a
+			// stream looks like anyway.
+			if o.unitMode == unitCueStart {
+				uopts = append(uopts, generate.WithFlipAtCueStart(unitAt(i+perUnit), content))
+			}
+			frames, err = generate.BuildUnitCues(o.fps, u, cuePeriodMS, content, uopts...)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("unit %d (%d frames from frame %d): %w", u.Nr, u.Frames, i, err)
+		}
+		out = append(out, frames...)
+	}
+	return out, nil
+}
+
 // writeSynthetic emits a single-track AVC fragmented mp4 whose per-frame samples
 // carry the wall-clock caption SEI. It returns whether the caption overran the
 // build budget at this frame rate.
-func writeSynthetic(
-	fps, seconds float64, start time.Time, cfg generate.Config, genOpts []generate.GeneratorOption,
-	out, status io.Writer,
-) (bool, error) {
-	nFrames := int(math.Round(seconds * fps))
+func writeSynthetic(start time.Time, o *options, out, status io.Writer) (bool, error) {
+	fps := o.fps
+	nFrames := int(math.Round(o.seconds * fps))
 	if nFrames < 1 {
 		nFrames = 1
 	}
@@ -288,12 +480,12 @@ func writeSynthetic(
 	}
 	seg.AddFragment(frag)
 
-	gen := generate.NewGenerator(fps, cfg, genOpts...)
-	startMS := start.UnixMilli()
-	frameDurMS := 1000.0 / fps
+	src, err := newCapSource(start, o, nFrames)
+	if err != nil {
+		return false, err
+	}
 	for i := 0; i < nFrames; i++ {
-		wallMS := startMS + int64(math.Round(float64(i)*frameDurMS))
-		fr := gen.NextFrame(wallMS)
+		fr := src.frame(i)
 		sei := carriage.FrameSEINALU(fr.Field1, fr.Field2, fr.CCCount, carriage.CodecAVC)
 		data := carriage.PrefixNALUs(sei, dummyVCL(i))
 		flags := mp4.NonSyncSampleFlags
@@ -313,8 +505,17 @@ func writeSynthetic(
 	if err := seg.Encode(out); err != nil {
 		return false, fmt.Errorf("encoding media segment: %w", err)
 	}
-	fmt.Fprintf(status, "%s: synthetic AVC, %d frames at %g fps\n", appName, nFrames, fps)
-	return gen.Overran(), nil
+	fmt.Fprintf(status, "%s: synthetic AVC, %d frames at %g fps%s\n", appName, nFrames, fps, o.unitNote())
+	return src.overran(), nil
+}
+
+// unitNote describes the per-unit generation in the status line, or nothing when the
+// continuous generator is driving.
+func (o *options) unitNote() string {
+	if o.unitMode == unitOff {
+		return ""
+	}
+	return fmt.Sprintf(", per-unit (%g s units, -unit-mode %s)", o.unitSeconds, o.unitMode)
 }
 
 // dummyVCL returns the placeholder VCL NAL for synthetic frame i: an AVC IDR slice
@@ -331,10 +532,7 @@ func dummyVCL(i int) []byte {
 // caption SEI into every frame, rebuilding each fragment with the grown samples
 // and preserving the original decode timing. It returns whether the caption
 // overran the build budget at this frame rate.
-func spliceInput(
-	inPath string, fps float64, start time.Time, cfg generate.Config, genOpts []generate.GeneratorOption,
-	out, status io.Writer,
-) (bool, error) {
+func spliceInput(inPath string, start time.Time, o *options, out, status io.Writer) (bool, error) {
 	raw, err := os.ReadFile(inPath)
 	if err != nil {
 		return false, fmt.Errorf("reading %s: %w", inPath, err)
@@ -347,22 +545,27 @@ func spliceInput(
 	if err != nil {
 		return false, err
 	}
+	// Count the input's samples first: under -unit-mode the units have to tile a run
+	// whose length is known before any caption is generated.
+	samples, _, err := mp4io.Samples(f, trex)
+	if err != nil {
+		return false, err
+	}
+	src, err := newCapSource(start, o, len(samples))
+	if err != nil {
+		return false, err
+	}
 
-	gen := generate.NewGenerator(fps, cfg, genOpts...)
-	startMS := start.UnixMilli()
-	frameDurMS := 1000.0 / fps
 	frames := 0
-	// Drive the caption by frame index at the chosen rate (start + i*frameDur), so
-	// the two lines stay in lockstep and the clock advances one second per second.
 	ccFor := func(info mp4io.SampleInfo) ([]byte, error) {
-		wallMS := startMS + int64(math.Round(float64(info.Index)*frameDurMS))
-		fr := gen.NextFrame(wallMS)
+		fr := src.frame(info.Index)
 		frames = info.Index + 1
 		return carriage.BuildCCData(fr.Field1, fr.Field2, fr.CCCount), nil
 	}
 	if err := mp4io.SpliceFragmented(f, track, trex, out, ccFor); err != nil {
 		return false, err
 	}
-	fmt.Fprintf(status, "%s: spliced %s into %d %s frames at %g fps\n", appName, inPath, frames, track.Codec, fps)
-	return gen.Overran(), nil
+	fmt.Fprintf(status, "%s: spliced %s into %d %s frames at %g fps%s\n",
+		appName, inPath, frames, track.Codec, o.fps, o.unitNote())
+	return src.overran(), nil
 }

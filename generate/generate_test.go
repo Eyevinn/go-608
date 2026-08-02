@@ -106,6 +106,46 @@ func TestGeneratorRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWallClockContent checks the bridge between the two APIs: the CueContentFunc it
+// returns renders the same lines the Generator does, so a per-unit builder can serve
+// the identical caption. Media time is measured from originMS, UTC from the cue itself.
+func TestWallClockContent(t *testing.T) {
+	origin := startWall // 2026-07-20T14:23:44Z
+	content := WallClockContent(DefaultConfig(), origin)
+
+	cue := content(Unit{Nr: 3, StartMS: origin + 2000}, 0, origin+2000)
+	if len(cue.Lines) != 2 {
+		t.Fatalf("got %d lines, want 2", len(cue.Lines))
+	}
+	if got, want := cue.Lines[0].Runs[0].Text, "2026-07-20T14:23:46Z"; got != want {
+		t.Errorf("UTC line = %q, want %q", got, want)
+	}
+	if got, want := cue.Lines[1].Runs[0].Text, "MEDIA 00:00:02"; got != want {
+		t.Errorf("media line = %q, want %q (measured from originMS)", got, want)
+	}
+	if cue.Lines[0].Row != 14 || cue.Lines[1].Row != 15 {
+		t.Errorf("rows = %d/%d, want 14/15 from the Config", cue.Lines[0].Row, cue.Lines[1].Row)
+	}
+	if cue.Lines[1].Runs[0].Pen.Color != cta608.Yellow {
+		t.Errorf("media line color = %s, want yellow from the Config", cue.Lines[1].Runs[0].Pen.Color)
+	}
+
+	// An empty Config falls back to DefaultConfig, as NewGenerator does.
+	if got := WallClockContent(Config{}, origin)(Unit{}, 0, origin); len(got.Lines) != 2 {
+		t.Errorf("empty Config gave %d lines, want DefaultConfig's 2", len(got.Lines))
+	}
+
+	// It renders what the Generator renders: compare against the generator's own lines
+	// for the same second and media time.
+	g := NewGenerator(30, DefaultConfig())
+	want := g.lines((origin+2000)/1000, 2000)
+	for i := range want {
+		if cue.Lines[i].Runs[0].Text != want[i].Runs[0].Text {
+			t.Errorf("line %d = %q, generator renders %q", i, cue.Lines[i].Runs[0].Text, want[i].Runs[0].Text)
+		}
+	}
+}
+
 func TestGeneratorCCCountPerFPS(t *testing.T) {
 	cases := map[float64]int{25: 24, 30: 20, 29.97: 20, 50: 12, 60: 10}
 	for fps, want := range cases {

@@ -284,6 +284,11 @@ func BuildUnitPaintCues(fps float64, u Unit, targetPeriodMS int64,
 func BuildUnitRollUpCues(fps float64, u Unit, targetPeriodMS int64, rows int,
 	content CueContentFunc, opts ...RollUpOption) ([]schedule.Frame, error)
 func WithRollUpCarry() RollUpOption // keep the previous unit's window instead of clearing it
+
+// The CueContentFunc that renders a Config's lines — the wall clock the Generator produces —
+// so the per-unit builders can serve the same caption a unit at a time. originMS is the
+// wall-clock time of the stream's first frame (media time is measured from it).
+func WallClockContent(cfg Config, originMS int64) CueContentFunc
 ```
 
 > **Cross-note reconciliation:** [#7](docs/design/cea608-wallclock-generation.md) and
