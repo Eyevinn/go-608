@@ -19,11 +19,18 @@
 // media time yellow); override with repeated -line flags. Pass -fps matching the
 // media so the wall clock advances one second per second, frame-accurately.
 //
+// -mode picks how each second reaches the screen: pop-on (the default) builds it
+// off-screen and flips it on whole at the second boundary; paint-on clears the
+// screen on the boundary and writes the caption straight onto it, two characters
+// per frame, so the text visibly types itself out and then stands until the next
+// second's clear.
+//
 // Usage:
 //
 //	go608-clock -o out.mp4 -fps 30 -seconds 5
 //	go608-clock -i in.mp4 -o out.mp4 -fps 25
 //	go608-clock -o out.mp4 -line 14:white:utc -line 15:yellow:media
+//	go608-clock -o out.mp4 -mode paint-on -seconds 5
 //	go608-clock -version
 package main
 
@@ -114,7 +121,23 @@ type options struct {
 	fps     float64
 	seconds float64
 	start   string
+	mode    string
 	lines   lineFlag
+}
+
+// genOptions turns the -mode flag into the generator options, rejecting any other
+// value. "pop-on" builds each second off-screen and flips it on whole; "paint-on"
+// clears at the second boundary and writes the caption onto the screen as it goes,
+// so the text visibly types itself out.
+func (o *options) genOptions() ([]generate.GeneratorOption, error) {
+	switch o.mode {
+	case "", "pop-on":
+		return nil, nil
+	case "paint-on":
+		return []generate.GeneratorOption{generate.WithPaintOn()}, nil
+	default:
+		return nil, fmt.Errorf("-mode %q must be \"pop-on\" or \"paint-on\"", o.mode)
+	}
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -131,6 +154,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.Float64Var(&opts.fps, "fps", 30, "frame rate driving caption cadence and wall-clock advance")
 	fs.Float64Var(&opts.seconds, "seconds", 3, "synthetic-mode duration in seconds (ignored with -i)")
 	fs.StringVar(&opts.start, "start", "", "wall-clock start time (RFC3339); default: now (UTC)")
+	fs.StringVar(&opts.mode, "mode", "pop-on",
+		"caption mode: \"pop-on\" (flip each second on whole) or \"paint-on\" (type it out character by character)")
 	fs.Var(&opts.lines, "line", "caption line \"row:color:kind\" (repeatable; default: 14:white:utc, 15:yellow:media)")
 
 	err := fs.Parse(args[1:])
@@ -176,13 +201,17 @@ func run(args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	genOpts, err := opts.genOptions()
+	if err != nil {
+		return err
+	}
 
 	var buf bytes.Buffer
 	overran := false
 	if opts.input != "" {
-		overran, err = spliceInput(opts.input, opts.fps, start, opts.lines.config(), &buf, w)
+		overran, err = spliceInput(opts.input, opts.fps, start, opts.lines.config(), genOpts, &buf, w)
 	} else {
-		overran, err = writeSynthetic(opts.fps, opts.seconds, start, opts.lines.config(), &buf, w)
+		overran, err = writeSynthetic(opts.fps, opts.seconds, start, opts.lines.config(), genOpts, &buf, w)
 	}
 	if err != nil {
 		return err
@@ -213,7 +242,10 @@ func parseStart(s string) (time.Time, error) {
 // writeSynthetic emits a single-track AVC fragmented mp4 whose per-frame samples
 // carry the wall-clock caption SEI. It returns whether the caption overran the
 // build budget at this frame rate.
-func writeSynthetic(fps, seconds float64, start time.Time, cfg generate.Config, out, status io.Writer) (bool, error) {
+func writeSynthetic(
+	fps, seconds float64, start time.Time, cfg generate.Config, genOpts []generate.GeneratorOption,
+	out, status io.Writer,
+) (bool, error) {
 	nFrames := int(math.Round(seconds * fps))
 	if nFrames < 1 {
 		nFrames = 1
@@ -243,7 +275,7 @@ func writeSynthetic(fps, seconds float64, start time.Time, cfg generate.Config, 
 	}
 	seg.AddFragment(frag)
 
-	gen := generate.NewGenerator(fps, cfg)
+	gen := generate.NewGenerator(fps, cfg, genOpts...)
 	startMS := start.UnixMilli()
 	frameDurMS := 1000.0 / fps
 	for i := 0; i < nFrames; i++ {
@@ -287,7 +319,8 @@ func dummyVCL(i int) []byte {
 // and preserving the original decode timing. It returns whether the caption
 // overran the build budget at this frame rate.
 func spliceInput(
-	inPath string, fps float64, start time.Time, cfg generate.Config, out, status io.Writer,
+	inPath string, fps float64, start time.Time, cfg generate.Config, genOpts []generate.GeneratorOption,
+	out, status io.Writer,
 ) (bool, error) {
 	raw, err := os.ReadFile(inPath)
 	if err != nil {
@@ -302,7 +335,7 @@ func spliceInput(
 		return false, err
 	}
 
-	gen := generate.NewGenerator(fps, cfg)
+	gen := generate.NewGenerator(fps, cfg, genOpts...)
 	startMS := start.UnixMilli()
 	frameDurMS := 1000.0 / fps
 	frames := 0

@@ -42,12 +42,17 @@ func DefaultConfig() Config {
 // and flipped on with a single EOC on that second's last frame — frame-accurate
 // and zero-lag, because the EOC pair is scheduled eligible at the flip time.
 //
+// WithPaintOn swaps that for progressive paint-on: each second opens with a clear
+// and then writes its caption straight onto the displayed screen, so the text
+// visibly types itself out at the 608 wire rate.
+//
 // A Generator is not safe for concurrent use; drive it from one goroutine.
 type Generator struct {
 	fps         float64
 	frameDurMS  float64
 	buildBudget int // field-1 pairs that fit before the flip frame: round(fps)-1
 	cfg         Config
+	paintOn     bool // paint the caption progressively instead of popping it on
 
 	sched *schedule.Scheduler
 	enc   cta608.Encoder
@@ -57,15 +62,42 @@ type Generator struct {
 	overran     bool
 }
 
+// GeneratorOption configures a Generator at construction.
+type GeneratorOption func(*Generator)
+
+// WithPaintOn switches the generator from pop-on to paint-on, where each second's
+// caption is written directly onto the displayed screen instead of being built in
+// non-displayed memory and flipped on.
+//
+// Because paint-on has no hidden build phase, the wire cadence becomes the
+// animation: the second opens with an EDM that clears the screen on its first
+// frame, and each following frame carries one byte pair — up to two characters —
+// that a decoder renders immediately. The caption therefore types itself out over
+// the first ~half of the second (a ~23-pair two-line build is 0.77 s at 30 fps,
+// 0.38 s at 60 fps) and then stands complete until the next second's clear.
+//
+// Each second is painted from a clean screen and re-asserts paint-on mode (RDC),
+// so a decoder joining mid-stream is correct from the next second boundary, with
+// no reliance on earlier state. The cost relative to pop-on is that a viewer sees
+// the caption incomplete for part of every second; the gain is that nothing is
+// hidden — every pair on the wire is visible progress.
+//
+// The one-second budget is unchanged (Overran reports a caption that does not fit
+// it), and it is tighter here: the clear costs a pair and nothing may spill past
+// the second, since the next second's clear is what ends this one.
+func WithPaintOn() GeneratorOption {
+	return func(g *Generator) { g.paintOn = true }
+}
+
 // NewGenerator returns a Generator for the given frame rate and content config.
 // An empty Config uses DefaultConfig. fps must be a broadcast caption rate
 // (23.976..60); NewGenerator panics otherwise (via schedule.NewScheduler), whose
 // cc_count would fall outside carriage's valid range.
-func NewGenerator(fps float64, cfg Config) *Generator {
+func NewGenerator(fps float64, cfg Config, opts ...GeneratorOption) *Generator {
 	if len(cfg.Lines) == 0 {
 		cfg = DefaultConfig()
 	}
-	return &Generator{
+	g := &Generator{
 		fps:         fps,
 		frameDurMS:  1000.0 / fps,
 		buildBudget: int(math.Round(fps)) - 1,
@@ -75,6 +107,10 @@ func NewGenerator(fps float64, cfg Config) *Generator {
 		sched:       schedule.NewScheduler(fps, schedule.WithDoubling(cta608.DoublingOff)),
 		builtForSec: -1,
 	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // NextFrame advances the generator by one video frame presented at wall-clock
@@ -95,16 +131,24 @@ func (g *Generator) NextFrame(frameWallMS int64) schedule.Frame {
 
 // Overran reports whether any built second's caption did not fit the one-second,
 // one-pair-per-frame budget at this frame rate (the build needs more field-1
-// pairs than there are frames before the flip). It is sticky once set. A caller
-// can shorten the lines, drop a line, or raise the frame rate to clear it.
+// pairs than there are frames before the flip; under WithPaintOn, than there are
+// frames in the second). It is sticky once set. A caller can shorten the lines,
+// drop a line, or raise the frame rate to clear it.
 func (g *Generator) Overran() bool { return g.overran }
 
 // buildSecond builds the caption for the second after sec and schedules it: the
 // pop-on build (RCL/ENM + positioned rows) eligible now so it drains one pair per
 // frame, and the terminating EOC eligible at the flip time (the second's last
 // frame) so the flip is frame-accurate.
+//
+// Under WithPaintOn it instead paints the caption for sec itself, from nowMS —
+// see paintSecond.
 func (g *Generator) buildSecond(sec, nowMS int64) {
 	mediaMS := int64(math.Round(float64(g.frame) * g.frameDurMS))
+	if g.paintOn {
+		g.paintSecond(sec, mediaMS, nowMS)
+		return
+	}
 	block := g.block(sec+1, mediaMS+1000)
 	toks := g.enc.Apply(block)
 	build, eoc := splitEOC(toks)
@@ -120,9 +164,32 @@ func (g *Generator) buildSecond(sec, nowMS int64) {
 	}
 }
 
+// paintSecond schedules second sec's caption as a single paint-on transition
+// eligible at nowMS — the second's first frame. The batch is EDM (the clear) +
+// RDC + the positioned rows, and it drains one pair per frame, so the screen goes
+// blank on the second's first frame and the text then appears two characters at a
+// time until it stands complete for the rest of the second.
+//
+// The caption names the second being painted, not the next one: unlike a pop-on
+// flip there is no instant at which the whole caption arrives, so building ahead
+// would only put the coming second's text on screen during this one.
+func (g *Generator) paintSecond(sec, mediaMS, nowMS int64) {
+	toks := append([]cta608.Token{cta608.Command{Op: cta608.EDM}}, paintOnTokens(g.lines(sec, mediaMS))...)
+	if serializedPairs(toks) > g.buildBudget {
+		g.overran = true
+	}
+	g.sched.Push(schedule.TimedTokens{TimeMS: nowMS, Field: 1, Tokens: toks})
+}
+
 // block compiles the configured lines into a centered pop-on CaptionBlock for the
 // given wall-clock second and media time.
 func (g *Generator) block(wallSec, mediaMS int64) cta608.CaptionBlock {
+	return cta608.CaptionBlock{Lines: g.lines(wallSec, mediaMS), Mode: cta608.PopOn}
+}
+
+// lines renders the configured lines, each centered, for the given wall-clock
+// second and media time. Lines whose content is empty are dropped.
+func (g *Generator) lines(wallSec, mediaMS int64) []cta608.Line {
 	lines := make([]cta608.Line, 0, len(g.cfg.Lines))
 	for _, ls := range g.cfg.Lines {
 		text := content(ls.Kind, wallSec, mediaMS)
@@ -135,7 +202,7 @@ func (g *Generator) block(wallSec, mediaMS int64) cta608.CaptionBlock {
 			Runs:  []cta608.Run{{Text: text, Pen: cta608.Pen{Color: colorFor(ls.Color)}}},
 		})
 	}
-	return cta608.CaptionBlock{Lines: lines, Mode: cta608.PopOn}
+	return lines
 }
 
 // splitEOC separates the terminating EOC command (the pop-on flip) from the build
