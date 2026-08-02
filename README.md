@@ -391,6 +391,35 @@ next second boundary. The trade-off is the mirror of pop-on's: pop-on hides the
 build and shows a whole caption late, paint-on shows every pair of progress but
 the text is incomplete for part of each second.
 
+**`WithRollUp(rows)` scrolls instead of clearing.** Roll-up is the mode live
+captioning uses, and it types its text out the same way paint-on does — the
+difference is the boundary between seconds. There is **no clear**: a second is a
+`CR` (which scrolls the 2-4 row window up and empties the base row) followed by the
+new line, so the previous seconds stay visible above and age upward off the window.
+
+```go
+g := generate.NewGenerator(30.0, generate.DefaultConfig(), generate.WithRollUp(3))
+```
+
+```text
+frame 30  94 26  RU3        window size (restated each second)
+frame 31  94 ad  CR         scroll: row 14 → 13, row 15 → 14, base row cleared
+frame 34  32 b0  "20"       ─┐ the new UTC line types onto row 15…
+frame 43  b5 da  "…45Z"     ─┘
+frame 44  94 ad  CR         scroll again: the UTC line moves to 14
+frame 47  cd 45  "ME"       ─┐ the media line types onto row 15
+frame 53  b0 31  "…01"      ─┘ settled: 13=MEDIA 00:00:00 14=…45Z 15=MEDIA 00:00:01
+```
+
+Each configured line is its own scroll step, written in **`Row` order** so the window
+ends up laid out as the rows declare (the same picture pop-on and paint-on give); the
+largest `Row` is the base row. The history in the rows above is the **decoder's** and
+is never retransmitted, so a receiver joining mid-stream starts with a partly filled
+window that completes after `rows-1` seconds — exactly what tuning into a live
+broadcast looks like. Roll-up costs two extra pairs per line (the mode entry once per
+second, plus each line's `CR`), which makes it the tightest budget of the three: the
+default two lines are **24 pairs, exactly the 25 fps budget**.
+
 ## Per-unit cues (`BuildUnitCues`)
 
 `generate.BuildUnitCues` is the segment-oriented counterpart to `Generator`: **one call
@@ -525,6 +554,41 @@ text is only complete for the tail of its slice (0.5 s of a 1 s slice for the ex
 above), so paint-on suits a caption whose *arrival* is the point — a visible liveness tell
 that stalls the moment the stream does. A cue that cannot finish painting inside its slice
 with a frame to spare is a returned error.
+
+### Roll-up cues (`BuildUnitRollUpCues`)
+
+`generate.BuildUnitRollUpCues` is the third variant: same `Unit`, same `CueContentFunc`,
+plus the window size. Each cue is the `RU2/3/4` mode entry followed by a `CR` and the
+typed text for each of its lines, eligible at its slice's first frame.
+
+```go
+frames, err := generate.BuildUnitRollUpCues(fps, unit, 1000, 3, content)               // reset (default)
+frames, err := generate.BuildUnitRollUpCues(fps, unit, 1000, 3, content,
+    generate.WithRollUpCarry())                                                        // keep the window
+```
+
+**What happens between cues is the whole question**, because roll-up is the one mode that
+defines only the *new* line and leaves the rest of the window to the decoder:
+
+- **Default — reset.** The unit opens with an `EDM` on its first frame, so the window
+  starts empty and refills from the unit's own cues. The unit is then self-contained in
+  *display* as well as in data: a receiver that joins, seeks, or starts here sees exactly
+  what a continuously-running one sees, and go-608 can promise that from the unit alone.
+  The cost is visible — the window truncates and refills at every unit boundary, and with
+  ~1 s cues it never holds more than `unitDurMS/targetPeriodMS` lines, so **a 2 s segment
+  cannot fill a 4-row window at all**.
+- **`WithRollUpCarry()`.** The window scrolls smoothly across boundaries and fills to its
+  full depth, as broadcast roll-up does. The cost is that the display depends on units
+  arriving in order: a joining receiver sees a thin window that completes after `rows-1`
+  cues, and a seek shows the pre-seek lines aging out over the same span. Both
+  self-correct.
+
+Reset is the default because it is the only option whose output is a function of the unit
+alone — the property the per-unit API exists to provide. Either way the emitted **data**
+is identical between the two apart from that one `EDM`, so a stateless server can serve
+either without tracking state. An empty cue (`UnitCue{}`) emits nothing and leaves the
+window standing; there is no clear to emit, since an empty roll-up cue is silence rather
+than an erase.
 
 ## Timed-text cues (the `cue` package)
 
@@ -729,14 +793,17 @@ go608-clock -o clock.mp4 -line 14:white:utc -line 15:yellow:media
 
 # Paint-on: clear each second and type the caption out, two characters per frame:
 go608-clock -o clock.mp4 -mode paint-on -seconds 5
+
+# Roll-up: scroll a 3-row window each second and type onto the bottom row:
+go608-clock -o clock.mp4 -mode roll-up3 -seconds 5
 ```
 
 Flags: `-o` (output, required), `-i` (input fMP4; omit for synthetic frames),
 `-fps` (default 30; also drives caption cadence and the wall-clock advance),
 `-seconds` (synthetic duration), `-start` (RFC3339 wall-clock start; default now
 UTC), `-line` (repeatable line config; default row 14 UTC white, row 15 media
-yellow), `-mode` (`pop-on`, the default, or `paint-on` — see [Wall-clock
-generation](#wall-clock-generation-first-milestone)), and `-version`. Without `-i` the output is a structurally valid fMP4
+yellow), `-mode` (`pop-on`, the default, `paint-on`, or `roll-up[2-4]` — see
+[Wall-clock generation](#wall-clock-generation-first-milestone)), and `-version`. Without `-i` the output is a structurally valid fMP4
 with placeholder video payloads — ideal for round-tripping the 608; pass `-i` to
 caption decodable video. If a line set can't build within one second at the
 chosen frame rate, the tool reports an overrun. The shared mp4 read/write and

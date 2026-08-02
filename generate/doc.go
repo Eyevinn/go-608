@@ -14,11 +14,15 @@
 // or MoQ group rather than one per frame — for a stateless server generating a
 // unit's captions from the unit alone.
 //
-// Both have a paint-on variant (WithPaintOn and BuildUnitPaintCues) that writes
-// the caption onto the displayed screen instead of flipping it on: the second (or
-// cue) opens with a clear and the text then appears two characters per frame, at
-// the 608 wire rate, so the caption visibly types itself out and stands complete
-// until the next clear.
+// Both have variants that write onto the displayed screen instead of flipping a
+// caption on, so the text appears two characters per frame — at the 608 wire rate
+// — and visibly types itself out:
+//
+//   - paint-on (WithPaintOn, BuildUnitPaintCues): the second or cue opens with a
+//     clear and the caption stands complete until the next clear.
+//   - roll-up (WithRollUp, BuildUnitRollUpCues): the window scrolls up instead of
+//     clearing and each line is typed onto the bottom row, so previous seconds
+//     stay visible above — what live captioning looks like.
 //
 // See SPEC.md section 4.4 / 7 and docs/design/cea608-wallclock-generation.md.
 package generate

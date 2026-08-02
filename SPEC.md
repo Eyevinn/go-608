@@ -256,6 +256,9 @@ func (g *Generator) NextFrame(frameWallMS int64) schedule.Frame
 // Paint-on instead of pop-on: each second opens with an EDM + RDC and the caption is written
 // onto the DISPLAYED screen, so the one-pair-per-frame cadence is the animation (2 chars/frame).
 func WithPaintOn() GeneratorOption
+// Roll-up in a 2..4 row window: no clear — each second is a CR (scroll) plus its typed lines,
+// and the rows above the base row hold the previous seconds (the decoder's, never resent).
+func WithRollUp(rows int) GeneratorOption
 
 // Per-unit cues — the segment-oriented counterpart (one call per DASH segment / MoQ group).
 // Unit's three fields are INDEPENDENT: a unit's start is not assumed to be Nr x duration
@@ -275,6 +278,12 @@ func WithFlipAtCueStart(next Unit, content CueContentFunc) UnitOption
 // WithFlipAtCueStart analogue.
 func BuildUnitPaintCues(fps float64, u Unit, targetPeriodMS int64,
 	content CueContentFunc) ([]schedule.Frame, error)
+// Roll-up counterpart: RU2/3/4 + (CR + typed line) per line, in Row order (bottom line last,
+// on the base row). Roll-up defines only the NEW line, so what happens between cues is a
+// choice: reset (default, EDM on the unit's first frame — self-contained display) or carry.
+func BuildUnitRollUpCues(fps float64, u Unit, targetPeriodMS int64, rows int,
+	content CueContentFunc, opts ...RollUpOption) ([]schedule.Frame, error)
+func WithRollUpCarry() RollUpOption // keep the previous unit's window instead of clearing it
 ```
 
 > **Cross-note reconciliation:** [#7](docs/design/cea608-wallclock-generation.md) and

@@ -86,6 +86,42 @@ func Example_generatePaintOn() {
 	// frame 10: "MEDIA 00:00:00"
 }
 
+// Example_generateRollUp drives the generator in roll-up (generate.WithRollUp) for
+// two seconds at 30 fps and prints the whole window whenever the bottom row settles.
+// Roll-up types its line out like paint-on but never clears: each second scrolls the
+// window up, so the previous second stays visible above the new one.
+func Example_generateRollUp() {
+	const fps = 30.0
+	g := generate.NewGenerator(fps, generate.Config{Lines: []generate.LineSpec{
+		{Row: 15, Color: "white", Kind: "media"},
+	}}, generate.WithRollUp(2))
+	var dec cta608.Decoder
+
+	start := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC).UnixMilli()
+	for frame := 0; frame < 60; frame++ {
+		wall := start + int64(math.Round(float64(frame)*1000.0/fps))
+		f := g.NextFrame(wall)
+		if len(f.Field1) > 0 {
+			nalu := carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, carriage.CodecAVC)
+			fld1, _, err := carriage.FieldPairs([][]byte{nalu}, carriage.CodecAVC)
+			if err != nil {
+				panic(err)
+			}
+			if err := dec.Feed(fld1); err != nil {
+				panic(err)
+			}
+		}
+		// Look at the settled window on the last frame of each second.
+		if frame == 29 || frame == 59 {
+			fmt.Printf("frame %2d: row14=%q row15=%q\n", frame,
+				rowText(dec.Screen(), 14), rowText(dec.Screen(), 15))
+		}
+	}
+	// Output:
+	// frame 29: row14="" row15="MEDIA 00:00:00"
+	// frame 59: row14="MEDIA 00:00:00" row15="MEDIA 00:00:01"
+}
+
 func rowText(s cta608.Screen, idx int) string {
 	for _, r := range s.Rows {
 		if r.Index != idx {
