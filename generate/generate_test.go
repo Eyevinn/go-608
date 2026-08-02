@@ -2,6 +2,7 @@ package generate
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +139,99 @@ func TestGeneratorCadence(t *testing.T) {
 	}
 	if g.Overran() {
 		t.Error("default two-line config overran at 30 fps")
+	}
+}
+
+// TestGeneratorPaintOn drives the paint-on generator for three seconds at 30 fps
+// and checks the animation contract: each second starts with a cleared screen,
+// grows by at most one byte pair (two characters) per frame, and stands complete
+// well before the next second clears it. The caption names the second it is being
+// painted in, unlike the pop-on generator, which paints the second ahead.
+func TestGeneratorPaintOn(t *testing.T) {
+	const fps = 30.0
+	g := NewGenerator(fps, DefaultConfig(), WithPaintOn())
+	var dec cta608.Decoder
+
+	screens := make([]string, 3*30)
+	for frame := 0; frame < 3*30; frame++ {
+		f := g.NextFrame(wallAt(frame, fps))
+		if len(f.Field2) != 0 {
+			t.Fatalf("frame %d field2 non-empty (CC1-only expected)", frame)
+		}
+		if len(f.Field1) > 0 {
+			nalu := carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, carriage.CodecAVC)
+			fld1, _, err := carriage.FieldPairs([][]byte{nalu}, carriage.CodecAVC)
+			if err != nil {
+				t.Fatalf("frame %d FieldPairs: %v", frame, err)
+			}
+			if err := dec.Feed(fld1); err != nil {
+				t.Fatalf("frame %d decode: %v", frame, err)
+			}
+		}
+		utc, _, _, _ := rowText(dec.Screen(), 14)
+		media, _, _, _ := rowText(dec.Screen(), 15)
+		screens[frame] = utc + media
+	}
+	if g.Overran() {
+		t.Error("default two-line config overran the paint-on budget at 30 fps")
+	}
+
+	want := []string{
+		"2026-07-20T14:23:44ZMEDIA 00:00:00",
+		"2026-07-20T14:23:45ZMEDIA 00:00:01",
+		"2026-07-20T14:23:46ZMEDIA 00:00:02",
+	}
+	for sec, w := range want {
+		start := sec * 30
+		if screens[start] != "" {
+			t.Errorf("second %d: frame %d shows %q, want the screen cleared on the second's first frame",
+				sec, start, screens[start])
+		}
+		done := -1
+		for i := start; i < start+30; i++ {
+			if !strings.HasPrefix(w, screens[i]) {
+				t.Fatalf("second %d frame %d: %q is not a prefix of %q", sec, i, screens[i], w)
+			}
+			prev := ""
+			if i > start {
+				prev = screens[i-1]
+			}
+			if n := len(screens[i]) - len(prev); n < 0 || n > 2 {
+				t.Errorf("second %d frame %d: screen grew by %d characters, want 0..2", sec, i, n)
+			}
+			if screens[i] == w && done < 0 {
+				done = i
+			}
+		}
+		if done < 0 {
+			t.Errorf("second %d never reached %q (last was %q)", sec, w, screens[start+29])
+			continue
+		}
+		t.Logf("second %d: complete at frame %d (%.2f s in), held for %d frames",
+			sec, done, float64(done-start)/fps, start+30-done)
+		if done-start >= 29 {
+			t.Errorf("second %d completed at frame %d, leaving no time on screen", sec, done)
+		}
+	}
+}
+
+// TestGeneratorPaintOnOverrunGuard checks that the paint-on budget is reported the
+// same way as the pop-on one: a caption that cannot be written within its second.
+func TestGeneratorPaintOnOverrunGuard(t *testing.T) {
+	g := NewGenerator(30, DefaultConfig(), WithPaintOn())
+	g.NextFrame(wallAt(0, 30))
+	if g.Overran() {
+		t.Error("default config should not overrun at 30 fps")
+	}
+
+	big := Config{Lines: []LineSpec{
+		{Row: 12, Kind: "utc"}, {Row: 13, Kind: "utc"},
+		{Row: 14, Kind: "utc"}, {Row: 15, Kind: "utc"},
+	}}
+	g2 := NewGenerator(25, big, WithPaintOn())
+	g2.NextFrame(wallAt(0, 25))
+	if !g2.Overran() {
+		t.Error("four-line config should overrun at 25 fps")
 	}
 }
 

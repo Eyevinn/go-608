@@ -37,6 +37,7 @@ func TestRun(t *testing.T) {
 		{desc: "bad start", args: []string{appName, "-o", out, "-start", "not-a-time"}, err: true},
 		{desc: "bad line", args: []string{appName, "-o", out, "-line", "99:white:utc"}, err: true},
 		{desc: "fps out of caption range", args: []string{appName, "-o", out, "-fps", "15"}, err: true},
+		{desc: "bad mode", args: []string{appName, "-o", out, "-mode", "roll-up"}, err: true},
 		{
 			desc: "synthetic ok",
 			args: []string{appName, "-o", out, "-fps", "30", "-seconds", "1", "-start", startStr},
@@ -109,6 +110,54 @@ func TestSyntheticWallClock(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSyntheticPaintOn checks the -mode paint-on path end to end: each second the
+// caption is erased on the boundary frame and then written onto the screen a couple
+// of characters at a time, instead of appearing whole on one flip.
+func TestSyntheticPaintOn(t *testing.T) {
+	start, _ := time.Parse(time.RFC3339, startStr)
+	out := filepath.Join(t.TempDir(), "paint.mp4")
+	args := []string{appName, "-o", out, "-fps", "30", "-seconds", "3", "-start", startStr, "-mode", "paint-on"}
+	if err := run(args, io.Discard); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+
+	flips := decodeFlips(t, data, carriage.CodecAVC)
+	// A pop-on run of the same length yields 3 changes (one flip per second); painting
+	// changes the screen on most frames of each second.
+	if len(flips) < 30 {
+		t.Fatalf("got %d screen changes in 3 s of paint-on, want many (one per pair)", len(flips))
+	}
+	// Each second opens with a cleared screen and closes with the complete caption
+	// for that same second (paint-on shows the second it is painted in).
+	for sec := 0; sec < 3; sec++ {
+		wantUTC := time.Unix(start.Unix()+int64(sec), 0).UTC().Format("2006-01-02T15:04:05Z")
+		var cleared bool
+		var last flip
+		for _, fl := range flips {
+			if fl.frame < sec*30 || fl.frame >= (sec+1)*30 {
+				continue
+			}
+			if fl.frame == sec*30 && fl.utc == "" && fl.media == "" {
+				cleared = true
+			}
+			last = fl
+		}
+		if sec > 0 && !cleared {
+			t.Errorf("second %d: no clear on its first frame (frame %d)", sec, sec*30)
+		}
+		if last.utc != wantUTC {
+			t.Errorf("second %d ends showing %q, want %q", sec, last.utc, wantUTC)
+		}
+		if !strings.HasPrefix(last.media, "MEDIA ") {
+			t.Errorf("second %d media = %q, want a MEDIA hh:mm:ss line", sec, last.media)
+		}
 	}
 }
 

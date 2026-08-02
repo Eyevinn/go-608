@@ -44,6 +44,48 @@ func Example_generate() {
 	// flip @frame 89: 2026-01-02T15:04:08Z | MEDIA 00:00:03
 }
 
+// Example_generatePaintOn drives the same generator in paint-on mode
+// (generate.WithPaintOn) for one second at 30 fps and prints the screen every time
+// it changes. Instead of one flip at the second boundary, the second opens with a
+// cleared screen and the caption writes itself onto the display two characters per
+// frame — the 608 wire rate made visible — and then stands until the next second
+// clears it.
+func Example_generatePaintOn() {
+	const fps = 30.0
+	g := generate.NewGenerator(fps, generate.Config{Lines: []generate.LineSpec{
+		{Row: 15, Color: "yellow", Kind: "media"},
+	}}, generate.WithPaintOn())
+	var dec cta608.Decoder
+
+	start := time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC).UnixMilli()
+	for frame := 0; frame < 30; frame++ {
+		wall := start + int64(math.Round(float64(frame)*1000.0/fps))
+		f := g.NextFrame(wall)
+		if len(f.Field1) == 0 {
+			continue // idle frame: the caption is complete and stays on screen
+		}
+		nalu := carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, carriage.CodecAVC)
+		fld1, _, err := carriage.FieldPairs([][]byte{nalu}, carriage.CodecAVC)
+		if err != nil {
+			panic(err)
+		}
+		if err := dec.Feed(fld1); err != nil {
+			panic(err)
+		}
+		if dec.Changed() {
+			fmt.Printf("frame %2d: %q\n", frame, rowText(dec.Screen(), 15))
+		}
+	}
+	// Output:
+	// frame  4: "ME"
+	// frame  5: "MEDI"
+	// frame  6: "MEDIA "
+	// frame  7: "MEDIA 00"
+	// frame  8: "MEDIA 00:0"
+	// frame  9: "MEDIA 00:00:"
+	// frame 10: "MEDIA 00:00:00"
+}
+
 func rowText(s cta608.Screen, idx int) string {
 	for _, r := range s.Rows {
 		if r.Index != idx {

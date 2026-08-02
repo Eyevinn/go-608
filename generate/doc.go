@@ -10,5 +10,15 @@
 // content through the cta608 core and drives a schedule.Scheduler; the caller
 // wraps the returned triple with the carriage package.
 //
+// BuildUnitCues is the segment-oriented counterpart — one call per DASH segment
+// or MoQ group rather than one per frame — for a stateless server generating a
+// unit's captions from the unit alone.
+//
+// Both have a paint-on variant (WithPaintOn and BuildUnitPaintCues) that writes
+// the caption onto the displayed screen instead of flipping it on: the second (or
+// cue) opens with a clear and the text then appears two characters per frame, at
+// the 608 wire rate, so the caption visibly types itself out and stands complete
+// until the next clear.
+//
 // See SPEC.md section 4.4 / 7 and docs/design/cea608-wallclock-generation.md.
 package generate

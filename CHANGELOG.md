@@ -9,6 +9,27 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+### Added
+
+- Progressive **paint-on** generation, where a caption is written onto the displayed screen
+  a byte pair (two characters) per frame instead of being flipped on whole:
+
+  ```go
+  g := generate.NewGenerator(fps, cfg, generate.WithPaintOn()) // per-frame wall clock
+  frames, err := generate.BuildUnitPaintCues(fps, u, 1000, content) // per segment / MoQ group
+  ```
+
+  Each second (or cue) opens with an `EDM` on its first frame, re-asserts paint-on mode
+  (`RDC`) and repaints from a clean screen, then stands until the next clear. Paint-on
+  units are always self-contained — no cue's data crosses a unit boundary, so
+  `BuildUnitPaintCues` needs no `WithFlipAtCueStart` counterpart. A caption that cannot be
+  written inside its second/slice is reported the same way as a pop-on overrun.
+
+- `go608-clock -mode pop-on|paint-on` (default `pop-on`) selects between the two.
+
+- `generate.GeneratorOption`; `NewGenerator` now takes optional `GeneratorOption`s. Existing
+  two-argument calls are unaffected.
+
 ## [0.8.0] - 2026-07-30
 
 ### Added

@@ -249,10 +249,13 @@ func (s *Scheduler) Frame(frameWallMS int64) Frame
 type LineSpec struct { Row int; Color string; Kind string } // Kind: "utc" | "media" | …
 type Config   struct { Lines []LineSpec }                   // default: row14 utc white, row15 media yellow
 type Generator struct { /* fps, build/displayed state, drives a schedule.Scheduler */ }
-func NewGenerator(fps float64, cfg Config) *Generator
+func NewGenerator(fps float64, cfg Config, opts ...GeneratorOption) *Generator
 // Advance one frame; returns the per-frame triple (via the internal scheduler). The caller wraps
 // with carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, codec) and splices.
 func (g *Generator) NextFrame(frameWallMS int64) schedule.Frame
+// Paint-on instead of pop-on: each second opens with an EDM + RDC and the caption is written
+// onto the DISPLAYED screen, so the one-pair-per-frame cadence is the animation (2 chars/frame).
+func WithPaintOn() GeneratorOption
 
 // Per-unit cues — the segment-oriented counterpart (one call per DASH segment / MoQ group).
 // Unit's three fields are INDEPENDENT: a unit's start is not assumed to be Nr x duration
@@ -267,6 +270,11 @@ func BuildUnitCues(fps float64, u Unit, targetPeriodMS int64, content CueContent
 // Move each EOC onto its cue's first frame; the build rides the preceding frames, which for
 // a unit's first cue is the PREVIOUS unit. next names that following unit outright.
 func WithFlipAtCueStart(next Unit, content CueContentFunc) UnitOption
+// Paint-on counterpart: each cue is EDM + RDC + rows, eligible at its slice's first frame, so
+// the caption types itself out. Always self-contained per unit — no cross-unit build, hence no
+// WithFlipAtCueStart analogue.
+func BuildUnitPaintCues(fps float64, u Unit, targetPeriodMS int64,
+	content CueContentFunc) ([]schedule.Frame, error)
 ```
 
 > **Cross-note reconciliation:** [#7](docs/design/cea608-wallclock-generation.md) and

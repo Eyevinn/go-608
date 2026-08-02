@@ -358,6 +358,39 @@ colors, and content kinds. An **overrun guard** (`Overran()`) flags a line set
 that can't finish building within the one-second budget at the given frame rate.
 A runnable N-second snippet lives in [`examples/`](examples/).
 
+**`WithPaintOn()` types the caption out instead.** The generator then uses
+**paint-on**: each second opens with an `EDM` that clears the screen on its first
+frame, followed by `RDC` and the positioned rows written straight onto the
+*displayed* screen. Nothing is hidden in non-displayed memory, so the wire cadence
+becomes the animation — every frame's pair adds **two characters** (`Serialize`
+packs two per pair, the scheduler drains one pair per frame) and a decoder renders
+each as it arrives.
+
+```go
+g := generate.NewGenerator(30.0, generate.DefaultConfig(), generate.WithPaintOn())
+```
+
+```text
+frame  0: 94 2c   EDM          the screen clears on the second's first frame
+frame  1: 94 29   RDC          paint-on mode
+frame  2: 94 52   PAC row 14  ─┐ position (indent 4)
+frame  3: 97 a2   Tab 2       ─┘ + tab → column 6
+frame  4: 32 b0   "20"        ─┐
+frame  5: 32 b6   "26"         │ two characters per frame…
+       ...                     ┘
+frame 22: b0 b0   "00"           complete — it now stands until the next second's EDM
+```
+
+The default two lines take ~23 pairs, so at 30 fps the clock is written over
+**0.77 s** of each second and stands for the rest; at 60 fps it is 0.38 s of the
+second. `Overran()` reports a caption that cannot be written within its second —
+paint-on is the tighter budget of the two, since the clear costs a pair and the
+next second's clear is what ends this one. Each second is painted from a clean
+screen and re-asserts `RDC`, so a decoder joining mid-stream is correct from the
+next second boundary. The trade-off is the mirror of pop-on's: pop-on hides the
+build and shows a whole caption late, paint-on shows every pair of progress but
+the text is incomplete for part of each second.
+
 ## Per-unit cues (`BuildUnitCues`)
 
 `generate.BuildUnitCues` is the segment-oriented counterpart to `Generator`: **one call
@@ -456,6 +489,42 @@ to be flipped. Choose the default placement if that matters more than display ac
 Either way the 608 data rate is one pair per frame, so `cc_count` stays `round(600/fps)`,
 and a build that does not fit the frames available to it is a returned error rather than a
 silently dropped build (which would leave an EOC with nothing loaded).
+
+### Paint-on cues (`BuildUnitPaintCues`)
+
+`generate.BuildUnitPaintCues` takes the same arguments as `BuildUnitCues` — same `Unit`,
+same `CueContentFunc`, same slicing — but paints each cue onto the screen instead of
+popping it on:
+
+```go
+frames, err := generate.BuildUnitPaintCues(fps, generate.Unit{Nr: 42, StartMS: 84_000, Frames: 60},
+    1000, content)
+```
+
+Each cue is one batch — `EDM` (clear), `RDC` (paint-on), then the positioned rows — eligible
+at its slice's first frame. Draining it one pair per frame *is* the animation: the screen
+goes blank on the boundary, fills two characters at a time, and holds until the next cue's
+clear. A 2 s segment at 30 fps, two lines of ~12 characters:
+
+```text
+frame  0  94 2c  EDM       screen clears
+frame  4  31 34  "14"      ─┐
+frame  9  b0 b0  "…000"     │ row 14 written out
+frame 14  34 32  "SEG 42"  ─┘ complete at frame 14 of 30
+frames 15-29     idle        the whole caption stands on screen
+frame 30  94 2c  EDM       the next cue clears and repaints
+```
+
+The trade-off against pop-on is the same one `WithPaintOn` makes for `Generator`, plus one
+structural gain: **a paint-on unit is always self-contained**. No cue's data crosses a unit
+boundary, every unit opens by clearing the screen and re-asserting `RDC`, and a receiver
+that joins mid-stream is correct from the first cue boundary it sees — so there is no
+`WithFlipAtCueStart` here, and none of its discontinuity cost, while the caption is still
+displayed over the interval its text names. What you give up is readability time: a cue's
+text is only complete for the tail of its slice (0.5 s of a 1 s slice for the example
+above), so paint-on suits a caption whose *arrival* is the point — a visible liveness tell
+that stalls the moment the stream does. A cue that cannot finish painting inside its slice
+with a frame to spare is a returned error.
 
 ## Timed-text cues (the `cue` package)
 
@@ -657,13 +726,17 @@ go608-clock -i input.mp4 -o captioned.mp4 -fps 25
 
 # Custom caption lines (repeatable "row:color:kind"; kind is "utc" or "media"):
 go608-clock -o clock.mp4 -line 14:white:utc -line 15:yellow:media
+
+# Paint-on: clear each second and type the caption out, two characters per frame:
+go608-clock -o clock.mp4 -mode paint-on -seconds 5
 ```
 
 Flags: `-o` (output, required), `-i` (input fMP4; omit for synthetic frames),
 `-fps` (default 30; also drives caption cadence and the wall-clock advance),
 `-seconds` (synthetic duration), `-start` (RFC3339 wall-clock start; default now
 UTC), `-line` (repeatable line config; default row 14 UTC white, row 15 media
-yellow), and `-version`. Without `-i` the output is a structurally valid fMP4
+yellow), `-mode` (`pop-on`, the default, or `paint-on` — see [Wall-clock
+generation](#wall-clock-generation-first-milestone)), and `-version`. Without `-i` the output is a structurally valid fMP4
 with placeholder video payloads — ideal for round-tripping the 608; pass `-i` to
 caption decodable video. If a line set can't build within one second at the
 chosen frame rate, the tool reports an overrun. The shared mp4 read/write and
