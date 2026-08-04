@@ -121,11 +121,15 @@ works at all. Measured for the default two lines, centered, white over yellow:
 | `2026-07-20T15:04:05Z` | 23 | 23 | 24 | **25** |
 | `15:04:05Z` | 18 | 18 | 19 | 20 |
 
-A second holds `round(fps)-1` usable pairs — the last pair must land a frame before the next cue, so
-the finished caption is displayed at least once. That is 24 at 25 fps and 23 at 23.976. With the date,
-five of the mode/policy combinations `go608-clock` offers did not fit: roll-up under the default
-per-unit reset at both 25 and 23.976 fps, and at 23.976 even plain pop-on. **Dropping the date is
-what makes the default caption fit every supported rate**, with 3 pairs of headroom at the tightest.
+A **per-unit slice** holds `round(fps)-1` usable pairs — the last pair must land a frame before the
+next cue, so the finished caption is displayed at least once. That is 24 at 25 fps and 23 at 23.976.
+With the date the per-unit builders could not fit the default caption at either of those rates:
+roll-up failed at 25 and 23.976 fps in every window size (`RU2/3/4` all cost the same single
+mode-entry pair), and pop-on failed at 23.976; only paint-on fit throughout. The continuous
+`Generator` makes no such reservation — its flip *is* the last pair of the second — so its budget is
+the full `round(fps)`, and it was never over it: at 23.976 fps the old 23-pair build plus the `EOC`
+came to exactly the 24 available. Exactly is not margin, though. **Dropping the date is what makes
+the default caption fit every supported rate**, with 3 pairs of headroom at the tightest.
 
 Time-of-day is also the honest unit for what this caption is: the second is what a viewer reads
 against media time, and the date is fixed by `-start` for the length of any run worth watching.

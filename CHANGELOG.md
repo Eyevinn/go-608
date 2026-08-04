@@ -9,6 +9,8 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-04
+
 ### Added
 
 - Progressive **paint-on** generation, where a caption is written onto the displayed screen
@@ -41,9 +43,10 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   self-contained in display as well as data; `WithRollUpCarry` keeps the previous unit's
   lines and scrolls them instead. `generate.RollUpOption` is deliberately separate from
   `UnitOption` — `WithFlipAtCueStart` is a pop-on concept and must not be passable here.
-  Roll-up is the tightest of the three modes per line (a mode entry per cue plus a `CR` per
-  line): the default two lines are 19 pairs, and 20 once a per-unit builder prepends its
-  window reset, against the 24 a 25 fps second allows.
+  Roll-up is the tightest budget of the three: its control overhead is a mode entry per cue
+  plus a `CR` per line — `1+L` pairs for `L` lines against paint-on's two — so it costs `L-1`
+  pairs more than paint-on. The default two lines are 19 pairs, and 20 once a per-unit builder
+  prepends its window reset, against the 24 a per-unit slice has at 25 fps.
 
   Because every line is its own scroll step, a cue of `L` lines consumes `L` of the `rows`
   rows: `rows == L` keeps **no** history, and a whole earlier cue needs `rows >= 2*L`. For
@@ -67,17 +70,26 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   only there (`WithFlipAtCueStart` for pop-on, `WithRollUpCarry` for roll-up); a policy that
   does not match `-mode` is an error rather than a silently ignored flag.
 
+  Units tile the run from its first frame and every one of them is a **whole** unit: a run that
+  does not end on a unit boundary is cut mid-unit, as a stream stopping mid-segment is. The run
+  length therefore need not be a multiple of `-unit-seconds`, which matters for `-i`, where the
+  sample count is whatever the input has.
+
 ### Changed
 
 - **The default UTC caption line is time-of-day (`15:04:05Z`) rather than a full RFC3339
   timestamp.** A line's width is a claim on the one-pair-per-frame 608 budget, and the date cost
-  5 of the 24 pairs a 25 fps second allows: the default two lines were 23 pairs as a pop-on
-  build, 23 in paint-on and 24 in roll-up — 25 once a per-unit builder prepends its window
-  reset. Five of the `go608-clock` mode/policy combinations therefore did not fit their slice:
-  roll-up under the default per-unit reset at 25 and 23.976 fps, and at 23.976 fps even plain
-  pop-on. Time-of-day brings those to 18/18/19/20, which fits every supported rate with 3 pairs
-  spare at the tightest, and leaves room for a coloured row 14 (one extra pair for its mid-row
-  cell). `Z` is kept, so the line is still unambiguously UTC, and the date is fixed by `-start`
+  5 of the 24 pairs a per-unit slice has at 25 fps: the default two lines were 23 pairs as a
+  pop-on build, 23 in paint-on and 24 in roll-up — 25 once a per-unit builder prepends its
+  window reset. The **per-unit** builders therefore could not fit the default caption at the
+  lower broadcast rates, since they reserve a frame so the finished caption is displayed at
+  least once: roll-up failed at both 25 and 23.976 fps in every window size (`RU2/3/4` cost the
+  same single mode-entry pair), and pop-on failed at 23.976 fps. Only paint-on fit throughout.
+  The continuous `Generator` was not over budget at any supported rate, but it had no slack
+  left either — at 23.976 fps a 23-pair build plus the `EOC` is exactly the 24 pairs that rate
+  allows. Time-of-day brings the four figures to 18/18/19/20, which fits every supported rate
+  with 3 pairs spare at the tightest, and leaves room for a coloured row 14 (one extra pair for
+  its mid-row cell). `Z` is kept, so the line is still unambiguously UTC, and the date is fixed by `-start`
   for any run worth watching. Callers who want the full timestamp pass their own
   `CueContentFunc`; only the default `Config` changed. See
   [W9](docs/design/cea608-wallclock-generation.md).
@@ -92,15 +104,6 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   -seconds 28.8` decoded to 27 captions for 30 slices — one second never shown, another held
   for 1.92 s, and the rest ticking every 0.96 s. Units shorter than one period still get one
   cue, the one case the trade cannot be made.
-
-### Fixed
-
-- **`go608-clock -unit-mode` failed on any run that was not a whole number of units.** The
-  trailing partial unit was built as the short unit it was, and a builder refuses a slice too
-  small for its ~23-pair build, so `-seconds 4.5 -unit-seconds 2` errored — and under `-i`,
-  where the sample count is whatever the input has, that was the common case. Units are now
-  always whole and the run is cut mid-unit instead, which also stops `cue-start` from naming
-  the wrong second when the last unit was truncated.
 
 ## [0.8.0] - 2026-07-30
 
@@ -436,7 +439,8 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   `go608-info`) and extends `internal/mp4io` with a reusable `SpliceFragmented`
   fragment rewriter (also adopted by `go608-clock`) and a `Samples` flattener.
 
-[Unreleased]: https://github.com/Eyevinn/go-608/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/go-608/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Eyevinn/go-608/releases/tag/v0.6.0
