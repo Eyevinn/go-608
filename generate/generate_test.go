@@ -2,6 +2,7 @@ package generate
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -258,8 +259,10 @@ func TestGeneratorPaintOn(t *testing.T) {
 }
 
 // TestGeneratorRollUp drives the roll-up generator for three seconds at 30 fps: each
-// second scrolls the window and types its two lines onto the base row, and the
-// previous second stays visible above with nothing ever erased.
+// second scrolls the window and types its two lines onto the base row, with nothing
+// ever erased. rows is 3 against 2 lines, which keeps the previous second's bottom
+// line above — see TestGeneratorRollUpHistoryDepth for why that is the rows/lines
+// relation rather than a property of roll-up itself.
 func TestGeneratorRollUp(t *testing.T) {
 	const fps = 30.0
 	const base, rows = 15, 3
@@ -314,9 +317,67 @@ func TestGeneratorRollUp(t *testing.T) {
 	}
 }
 
+// TestGeneratorRollUpHistoryDepth pins the relation that decides how much of an earlier
+// second a roll-up window keeps. Every configured line is its own scroll step, so a cue
+// of L lines consumes L of the rows rows — the depth is rows against L, not rows against
+// seconds. With DefaultConfig's two lines that makes rows 2 the *no-history* case, which
+// is what WithRollUp's zero value and go608-clock's plain -mode roll-up select.
+func TestGeneratorRollUpHistoryDepth(t *testing.T) {
+	const fps = 30.0
+	const base = 15
+	// The settled window at frame 89 — the end of the third second, showing 14:23:46Z
+	// over MEDIA 00:00:02 — plus the second by which every row is populated: ceil(rows/2).
+	cases := []struct {
+		rows     int
+		want     []string
+		fillSecs int
+	}{
+		{2, []string{"14:23:46Z", "MEDIA 00:00:02"}, 1},
+		{3, []string{"MEDIA 00:00:01", "14:23:46Z", "MEDIA 00:00:02"}, 2},
+		{4, []string{"14:23:45Z", "MEDIA 00:00:01", "14:23:46Z", "MEDIA 00:00:02"}, 2},
+	}
+	for _, c := range cases {
+		g := NewGenerator(fps, DefaultConfig(), WithRollUp(c.rows))
+		frames := make([]schedule.Frame, 3*30)
+		for frame := range frames {
+			frames[frame] = g.NextFrame(wallAt(frame, fps))
+		}
+		trace := rollTrace(t, frames, base, c.rows)
+
+		got := trace[89]
+		for r := range got {
+			if got[r] != c.want[r] {
+				t.Errorf("rows %d: settled window = %q, want %q", c.rows, got, c.want)
+				break
+			}
+		}
+		t.Logf("rows %d: settled window %q", c.rows, got)
+
+		// A window is full at the first frame where no row is empty; ceil(rows/2)
+		// seconds in, since each second contributes two rows.
+		full := -1
+		for i, win := range trace {
+			if !slices.Contains(win, "") {
+				full = i
+				break
+			}
+		}
+		if full < 0 {
+			t.Errorf("rows %d: window never filled in three seconds", c.rows)
+			continue
+		}
+		if sec := full/30 + 1; sec != c.fillSecs {
+			t.Errorf("rows %d: window filled during second %d (frame %d), want second %d",
+				c.rows, sec, full, c.fillSecs)
+		}
+		t.Logf("rows %d: filled at frame %d (%.3f s)", c.rows, full, float64(full)/fps)
+	}
+}
+
 // TestGeneratorRollUpBudget records where roll-up's extra pairs per line bite: the
-// default two lines are exactly the 25 fps budget, so anything more needs a faster
-// rate. This is the tightest of the three modes.
+// default two lines are 19 pairs against the 24 a 25 fps second allows, so there is
+// room for a little more content but not a third line. This is the tightest of the
+// three modes.
 func TestGeneratorRollUpBudget(t *testing.T) {
 	g := NewGenerator(25, DefaultConfig(), WithRollUp(2))
 	g.NextFrame(wallAt(0, 25))

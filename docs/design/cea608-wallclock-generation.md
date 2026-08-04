@@ -4,10 +4,11 @@ Design note for wayfinder ticket #7 — the first milestone livesim2 / moqlivemo
 with a runnable prototype: [`.scratch/proto-wallclock/`](../../.scratch/proto-wallclock/) (`go run .`). Builds on the
 `cta608` core (#5), the carriage seam (#6), and the consumer study (#4).
 
-W1–W6 are the original decisions, all about the pop-on clock the prototype covers. **W7–W9 were
+W1–W6 are the original decisions, all about the pop-on clock the prototype covers. **W7–W10 were
 added later**: W7–W8 for the direct-write caption modes and for what a roll-up unit owes the unit
 before it, extending W4 rather than replacing it; W9 narrows W2's content once those modes made the
-per-second pair budget binding. None of the three is in the prototype.
+per-second pair budget binding; W10 corrects the roll-up window arithmetic W7–W8 stated loosely.
+None of the four is in the prototype.
 
 ## Decisions
 
@@ -92,11 +93,12 @@ Reset is the default because it is the only behaviour that is a **function of th
 property the per-unit API exists to provide, and the same reasoning that makes paint-on units
 self-contained without needing a `WithFlipAtCueStart` counterpart. A receiver that joins, seeks or
 starts at a unit then sees exactly what a continuously-running one sees. The cost is a window that
-truncates at every boundary: with ~1 s cues it holds at most `unitDurMS/targetPeriodMS` lines, so a
-2 s segment cannot fill a 4-row window at all. Carry restores broadcast behaviour and full window
-depth, at the price of an order dependency — a joining receiver's window fills over `rows-1` cues,
-and a seek shows the pre-seek lines ageing out over the same span. Both self-correct; only one is
-provable from the unit.
+truncates at every boundary: the deepest it gets is the `L*N` rows a unit writes for itself, `L`
+lines per cue over its `N = NumCues` cues. Two one-second cues of two lines fill a 4-row window
+exactly — it is a *single-line* caption in a 2 s segment that reaches only 2 of 4 rows. Carry
+restores broadcast behaviour and full window depth, at the price of an order dependency — a joining
+receiver's window fills over `ceil(rows/L)` cues, and a seek shows the pre-seek lines ageing out over
+the same span. Both self-correct; only one is provable from the unit.
 
 The emitted **data** differs by exactly that one `EDM`, so a stateless per-segment server serves
 either policy without tracking state. `RollUpOption` is deliberately a **separate type** from
@@ -137,6 +139,32 @@ row 15 is already yellow, so a white row 14 is the default's only *centered whit
 one-column centering compensation of W6 applies only to coloured lines. Colouring both rows would
 leave every default run exercising just the compensated path. `-line 14:cyan:utc` is there for
 anyone who wants the colour.
+
+### W10 — Roll-up window depth is `rows` against *lines*, not against seconds
+
+Roll-up's window depth was described throughout as if a second occupied one row, which is only true
+for a single-line caption. **Every configured line is its own scroll step** (W7), so a cue of `L`
+lines consumes `L` of the `rows` rows, and the useful relations are all `rows` against `L` rather
+than against cues:
+
+| relation | with `L = 2` (the default) | effect |
+|---|---|---|
+| `rows == L` | `rows` 2 | **no history** — each cue scrolls the previous one entirely off |
+| `L < rows < 2L` | `rows` 3 | the previous cue's bottom line survives |
+| `rows >= 2L` | `rows` 4 | the previous cue survives whole |
+| fill time | 1 cue at `rows` 2, 2 cues at `rows` 3–4 | `ceil(rows/L)`, not `rows-1` |
+| reset depth | `L*N` rows, `N = NumCues` | two 1 s cues of 2 lines fill 4 rows *exactly* |
+
+Measured by decoding `go608-clock -mode roll-up[2-4]` at 30 fps: a 2-row window is complete at
+0.300 s, a 3-row at 1.033 s, a 4-row at 1.300 s — so 3- and 4-row windows both fill during the
+*second* second, which `rows-1` got right only for 2 and 3 rows. Likewise a 2 s unit under the
+default reset does fill a 4-row window, which the old "a 2 s segment cannot fill a 4-row window at
+all" denied; that statement was true only of a one-line caption.
+
+Nothing about the emitted data changes here — this is the arithmetic being stated correctly. The
+consequence worth knowing is that the **default** configuration (two lines, `rows` 2, which is what
+the zero value and plain `-mode roll-up` select) is the no-history case: it looks like pop-on that
+types itself out. `-mode roll-up4` is the one that shows a previous second whole.
 
 ## Generator API (validated by the prototype)
 
