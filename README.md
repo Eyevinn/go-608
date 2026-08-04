@@ -855,7 +855,10 @@ reaches the two cross-unit policies that exist only there:
 | `carry` | `-mode roll-up*` | `WithRollUpCarry`: keep the roll-up window across unit boundaries instead of clearing it |
 
 A mismatch (`-unit-mode carry` with pop-on, say) is an error rather than a silently
-ignored flag.
+ignored flag. Units tile the run from its first frame and every one of them is a **whole**
+unit; a run that does not end on a unit boundary is cut mid-unit, exactly as a stream
+stopping mid-segment is. The run length need not be a multiple of `-unit-seconds`, which
+matters for `-i`, where the sample count is whatever the input has.
 
 Without `-i` the output is a structurally valid fMP4 with placeholder video payloads
 — ideal for round-tripping the 608; pass `-i` to caption decodable video. If a line

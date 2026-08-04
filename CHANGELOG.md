@@ -72,6 +72,15 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   for 1.92 s, and the rest ticking every 0.96 s. Units shorter than one period still get one
   cue, the one case the trade cannot be made.
 
+### Fixed
+
+- **`go608-clock -unit-mode` failed on any run that was not a whole number of units.** The
+  trailing partial unit was built as the short unit it was, and a builder refuses a slice too
+  small for its ~23-pair build, so `-seconds 4.5 -unit-seconds 2` errored — and under `-i`,
+  where the sample count is whatever the input has, that was the common case. Units are now
+  always whole and the run is cut mid-unit instead, which also stops `cue-start` from naming
+  the wrong second when the last unit was truncated.
+
 ## [0.8.0] - 2026-07-30
 
 ### Added
