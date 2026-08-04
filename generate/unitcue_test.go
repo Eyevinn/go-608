@@ -15,14 +15,19 @@ func TestNumCues(t *testing.T) {
 		unitDurMS, targetMS int64
 		want                int
 	}{
-		{1920, 1000, 2}, // 0.96 s each
-		{2002, 1000, 2}, // 1.001 s each
+		{1920, 1000, 1}, // truncates to 1 (1.92 s), never 2 x 0.96 s
+		{2002, 1000, 2}, // 1.001 s each: a 60-frame group at 30000/1001
+		{1001, 1000, 1}, // 1.001 s: a 30-frame group at 30000/1001
 		{2000, 1000, 2},
+		{1500, 1000, 1}, // 1.5 s, not 2 x 0.75 s
 		{1000, 1000, 1},
-		{960, 1000, 1},  // rounds to 1, never 0
+		{960, 1000, 1},  // shorter than the period: one cue, never 0
+		{501, 1000, 1},  // a 30-frame group at 60000/1001
 		{4000, 1000, 4}, // 1.0 s each
-		{3840, 1000, 4}, // 0.96 s each
+		{3840, 1000, 3}, // 1.28 s each, not 4 x 0.96 s
 		{2002, 0, 2},    // targetMS<=0 defaults to 1000
+		{4000, 2000, 2}, // a period need not be a second
+		{4000, 1500, 2}, // 2 x 2.0 s, not 3 x 1.33 s
 	}
 	for _, c := range cases {
 		if got := NumCues(c.unitDurMS, c.targetMS); got != c.want {

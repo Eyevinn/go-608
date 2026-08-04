@@ -440,6 +440,18 @@ stateless server generating segments on demand needs. It splits the unit into
 `N = NumCues(unitDurMS, targetPeriodMS)` equal cue slices, asks a `CueContentFunc` for each
 slice's lines, and returns one `schedule.Frame` per video frame.
 
+`NumCues` divides **down**, so a cue is never shorter than the period you asked for:
+`max(1, unitDurMS/targetPeriodMS)` truncated. A 2.002 s segment (60 frames at 30000/1001)
+gets its two 1.001 s cues, and a 1.001 s segment one; a 1.92 s segment gets **one** 1.92 s
+cue rather than two of 0.96 s. The asymmetry matters when the content's resolution is the
+period — a clock labelled in whole seconds, which is what `WallClockContent` renders. Two
+cues starting inside the same second render identically, so the second one has nothing to
+flip and the caption ends up displayed up to a period after the instant it names. Dividing
+down spends cue rate to keep every caption true when it appears. A unit shorter than one
+period still gets one cue: that is the one case the trade cannot be made, and consecutive
+short units can then repeat a label (a 30-frame group at 60000/1001 is 501 ms, so the clock
+stays within half a second of true).
+
 There is one builder per caption mode, all taking the same `Unit` and `CueContentFunc`:
 `BuildUnitCues` (pop-on), [`BuildUnitPaintCues`](#paint-on-cues-buildunitpaintcues) and
 [`BuildUnitRollUpCues`](#roll-up-cues-buildunitrollupcues). They differ only in how a cue
