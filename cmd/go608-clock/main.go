@@ -383,10 +383,15 @@ func newCapSource(start time.Time, o *options, nFrames int) (*capSource, error) 
 // the results — the path a stateless segment server takes, one call per DASH segment or
 // MoQ group, exercised here so the demo can decode it back.
 //
-// Units tile the run from its first frame; a trailing partial unit is built as the
-// shorter unit it is. Each unit's caption is generated from the unit alone, exactly as a
-// server would, with generate.WallClockContent supplying the same lines the continuous
-// generator renders.
+// Units tile the run from its first frame, every one of them a whole unit: a run that
+// does not end on a unit boundary is cut mid-unit, which is what a stream stopping
+// mid-segment looks like. Building the last unit short instead would hand a builder a
+// slice too small for a caption — a ~23-pair build needs ~23 frames — so any run whose
+// length is not a multiple of the unit would fail, which for -i is the common case since
+// the sample count is whatever the input has.
+//
+// Each unit's caption is generated from the unit alone, exactly as a server would, with
+// generate.WallClockContent supplying the same lines the continuous generator renders.
 func buildUnitFrames(startMS int64, o *options, nFrames int) ([]schedule.Frame, error) {
 	mode, rows, err := o.captionMode()
 	if err != nil {
@@ -399,8 +404,9 @@ func buildUnitFrames(startMS int64, o *options, nFrames int) ([]schedule.Frame, 
 	frameDurMS := 1000.0 / o.fps
 	content := generate.WallClockContent(o.lines.config(), startMS)
 	// unitAt describes the unit starting at frame i: its number, its wall-clock start
-	// and a full frame count. It is also asked for the unit *after* the run's last one,
-	// which WithFlipAtCueStart needs to name; only Nr and StartMS are read for that.
+	// and a full frame count — full for every unit, including the last (see above). It is
+	// also asked for the unit *after* the run's last one, which WithFlipAtCueStart needs
+	// to name; only Nr and StartMS are read for that.
 	unitAt := func(i int) generate.Unit {
 		return generate.Unit{
 			Nr:      int64(i / perUnit),
@@ -412,9 +418,6 @@ func buildUnitFrames(startMS int64, o *options, nFrames int) ([]schedule.Frame, 
 	out := make([]schedule.Frame, 0, nFrames)
 	for i := 0; i < nFrames; i += perUnit {
 		u := unitAt(i)
-		if i+perUnit > nFrames {
-			u.Frames = nFrames - i // a trailing partial unit is built as the shorter unit it is
-		}
 		var frames []schedule.Frame
 		switch mode {
 		case modePaintOn:
@@ -442,6 +445,13 @@ func buildUnitFrames(startMS int64, o *options, nFrames int) ([]schedule.Frame, 
 			return nil, fmt.Errorf("unit %d (%d frames from frame %d): %w", u.Nr, u.Frames, i, err)
 		}
 		out = append(out, frames...)
+	}
+	if len(out) > nFrames {
+		// The run ends inside the last unit: keep the frames the run actually has. Cutting
+		// a suffix cannot orphan a flip — an EOC that survives still has its build ahead
+		// of it, wherever the mode put it — so the discarded frames only cost the cues
+		// that would have followed, and the caption holds what was last flipped.
+		out = out[:nFrames]
 	}
 	return out, nil
 }
