@@ -14,13 +14,20 @@ import (
 //	-X github.com/Eyevinn/go-608/internal.commitVersion=$(git describe --tags --always HEAD)
 //	-X github.com/Eyevinn/go-608/internal.commitDate=$(git log -1 --format=%ct)
 //
-// Both defaults are set by the chore(release) commit, so an un-stamped build still
-// reports the release it was cut from rather than a bare version. commitDate is that
-// commit's own timestamp; GetVersion renders only its date, so any later commit on
-// the same release leaves the reported date unchanged. A stamped build always wins.
+// The pair moves twice per cycle, and the two states say different things:
+//
+//   - Between releases (now): commitVersion carries a -dev suffix for the release being
+//     worked towards, and commitDate is empty. An un-stamped dev build therefore reports
+//     no date, which is the honest answer — it was not cut from a release, so there is no
+//     release date to give.
+//   - At a release: chore(release) drops the -dev suffix and sets commitDate to that
+//     commit's own timestamp, so an un-stamped build of the release reports both. Since
+//     GetVersion renders only the date, later commits on that release do not move it.
+//
+// A stamped build always wins over either.
 var (
-	commitVersion = "v0.9.0"
-	commitDate    = "1785844771" // commit date in Unix epoch seconds (2026-08-04)
+	commitVersion = "v0.10.0-dev"
+	commitDate    = "" // commit date in Unix epoch seconds; set at release
 )
 
 // GetVersion returns the build version, appending the commit date when it is
