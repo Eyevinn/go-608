@@ -124,10 +124,12 @@ func WithPaintOn() GeneratorOption {
 // scroll the UTC line to 14 and leave the media line on 15, the same picture
 // pop-on and paint-on produce. The largest configured Row is the base row.
 //
-// Roll-up costs two extra pairs per line over paint-on (the mode entry, once per
-// second, and each line's CR), which matters at low frame rates: the default two
-// lines are 19 pairs against the 24 a 25 fps second allows, so there is room for
-// more content but not much. Overran reports the overflow as always.
+// Roll-up's control overhead is the mode entry once per second plus a CR per line —
+// 1+L pairs for L lines, against paint-on's two (EDM and RDC) — so it costs L-1 pairs
+// more than paint-on: level at one line, +1 at two, +3 at four. That matters at low
+// frame rates: the default two lines are 19 pairs against the 24 a 25 fps second
+// allows, so there is room for more content but not much. Overran reports the overflow
+// as always.
 func WithRollUp(rows int) GeneratorOption {
 	return func(g *Generator) { g.mode = cta608.RollUp; g.rollUpRows = clampRows(rows) }
 }

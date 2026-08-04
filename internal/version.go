@@ -13,9 +13,14 @@ import (
 //
 //	-X github.com/Eyevinn/go-608/internal.commitVersion=$(git describe --tags --always HEAD)
 //	-X github.com/Eyevinn/go-608/internal.commitDate=$(git log -1 --format=%ct)
+//
+// Both defaults are set by the chore(release) commit, so an un-stamped build still
+// reports the release it was cut from rather than a bare version. commitDate is that
+// commit's own timestamp; GetVersion renders only its date, so any later commit on
+// the same release leaves the reported date unchanged. A stamped build always wins.
 var (
-	commitVersion = "v0.8.0"
-	commitDate    = "" // commit date in Unix epoch seconds
+	commitVersion = "v0.9.0"
+	commitDate    = "1785844771" // commit date in Unix epoch seconds (2026-08-04)
 )
 
 // GetVersion returns the build version, appending the commit date when it is

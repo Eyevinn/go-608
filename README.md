@@ -445,8 +445,10 @@ largest `Row` is the base row. The history in the rows above is the **decoder's*
 is never retransmitted, so a receiver joining mid-stream starts with a partly filled
 window that completes after `ceil(rows/L)` seconds for an `L`-line caption — for the
 default two lines, one second in a 2-row window and two in a 3- or 4-row one, exactly
-what tuning into a live broadcast looks like. Roll-up costs two extra pairs per line (the mode entry once per
-second, plus each line's `CR`), which makes it the tightest budget of the three: the
+what tuning into a live broadcast looks like. Roll-up's control overhead is the mode entry
+once per cue plus a `CR` per line — `1+L` pairs against paint-on's two (`EDM` + `RDC`) — so
+it costs `L-1` pairs more than paint-on for an `L`-line caption: level at one line, `+1` at
+two, `+3` at four. That makes it the tightest budget of the three: the
 default two lines are **19 pairs**, and **20** once a per-unit builder prepends its
 window reset, against the 24 a 25 fps second allows and the 23 of 23.976 fps. Those
 figures are why the default UTC line is time-of-day rather than a full RFC3339
