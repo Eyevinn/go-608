@@ -4,9 +4,10 @@ Design note for wayfinder ticket #7 — the first milestone livesim2 / moqlivemo
 with a runnable prototype: [`.scratch/proto-wallclock/`](../../.scratch/proto-wallclock/) (`go run .`). Builds on the
 `cta608` core (#5), the carriage seam (#6), and the consumer study (#4).
 
-W1–W6 are the original decisions, all about the pop-on clock the prototype covers. **W7–W8 were
-added later**, for the direct-write caption modes and for what a roll-up unit owes the unit before
-it; they extend W4 rather than replace it, and neither is in the prototype.
+W1–W6 are the original decisions, all about the pop-on clock the prototype covers. **W7–W9 were
+added later**: W7–W8 for the direct-write caption modes and for what a roll-up unit owes the unit
+before it, extending W4 rather than replacing it; W9 narrows W2's content once those modes made the
+per-second pair budget binding. None of the three is in the prototype.
 
 ## Decisions
 
@@ -20,7 +21,8 @@ seeks, and VFR, and makes **drop-frame a non-issue** (the caller's wall time alr
 
 ### W2 — Content: two centered lines, configurable
 
-- **Row 14:** UTC time **RFC3339** (`2026-07-17T14:23:45Z`) — mirrors livesim2 `timesubs`.
+- **Row 14:** UTC **time-of-day** (`14:23:45Z`) — livesim2 `timesubs` renders the full RFC3339
+  timestamp; the date was dropped in W9, which is a budget decision rather than a display one.
 - **Row 15:** a second line (media/segment time in the prototype), rendered **yellow**.
 - Both **horizontally centered**. Config selects the lines (row, colour, content kind). One line is
   the minimum; the second is optional but on by default here.
@@ -71,9 +73,11 @@ halving the 608 rate for a difference few viewers would notice and putting the d
 (~40 pairs) outside a 1 s budget at 30 fps.
 
 This does not revisit W3 — the **content** still refreshes once per second; only the reveal is
-progressive. W5's budget tightens: paint-on's clear costs a pair (~23 pairs for the default two
-lines, so 0.77 s of writing at 30 fps and 0.38 s at 60), and roll-up adds a mode entry per cue plus a
-`CR` per line (**24 pairs — exactly the 25 fps budget**), making it the most expensive of the three.
+progressive. W5's budget tightens: paint-on's clear costs a pair (18 pairs for the default two
+lines, so 0.6 s of writing at 30 fps and 0.3 s at 60), and roll-up adds a mode entry per cue plus a
+`CR` per line (19 pairs, and 20 once a per-unit builder prepends its window reset), making it the
+most expensive of the three. Those figures are what they are because of W9; with the full RFC3339
+date they were 23, 24 and 25, and the last of those does not fit a 25 fps second.
 The overrun guard reports the overflow as before (`Overran()`; a returned error in the per-unit
 builders, which know their slice length up front).
 
@@ -103,6 +107,36 @@ compile error beats a runtime one.
 `ccaption_dec` via `movie=…[out0+subcc]` over captioned H.264 — which shows the progressive reveal
 under `-real_time` and distinguishes reset from carry by the single `EDM` pair at the unit boundary.
 `go608-clock -mode` and `-unit-mode` drive both paths for exactly this purpose.
+
+### W9 — Content width is a budget decision: UTC as time-of-day
+
+608 drains **one byte pair per frame**, so a line's width is not a display preference — it is a
+direct claim on the per-second budget, and the tightest configuration decides whether the default
+works at all. Measured for the default two lines, centered, white over yellow:
+
+| default row 14 | pop-on build | paint-on | roll-up | roll-up + unit reset |
+|---|---|---|---|---|
+| `2026-07-20T15:04:05Z` | 23 | 23 | 24 | **25** |
+| `15:04:05Z` | 18 | 18 | 19 | 20 |
+
+A second holds `round(fps)-1` usable pairs — the last pair must land a frame before the next cue, so
+the finished caption is displayed at least once. That is 24 at 25 fps and 23 at 23.976. With the date,
+five of the mode/policy combinations `go608-clock` offers did not fit: roll-up under the default
+per-unit reset at both 25 and 23.976 fps, and at 23.976 even plain pop-on. **Dropping the date is
+what makes the default caption fit every supported rate**, with 3 pairs of headroom at the tightest.
+
+Time-of-day is also the honest unit for what this caption is: the second is what a viewer reads
+against media time, and the date is fixed by `-start` for the length of any run worth watching.
+`Z` stays, so the line is still unambiguously UTC. A caller who wants the full timestamp back can
+still pass their own `CueContentFunc` to the per-unit builders — this is only the default `Config`.
+
+The freed pairs also make a **coloured** row 14 affordable for the first time: a centered non-white
+line costs one extra pair for its mid-row cell (19/19/20/21 above), which the old width had no room
+for. The default stays **white** anyway, for a reason that is about coverage rather than looks —
+row 15 is already yellow, so a white row 14 is the default's only *centered white* line, and the
+one-column centering compensation of W6 applies only to coloured lines. Colouring both rows would
+leave every default run exercising just the compensated path. `-line 14:cyan:utc` is there for
+anyone who wants the colour.
 
 ## Generator API (validated by the prototype)
 
@@ -135,7 +169,8 @@ Composition across the stack:
 
 `.scratch/proto-wallclock/` — runnable throwaway (`go run .`): a portable `Generator` behind a
 line-driven TUI. Shows, per frame, the emitted byte-pair + `cc_count` and an ASCII render of the two
-centred rows building in non-displayed memory and flipping on the boundary. Sample (fps=30, after 1s):
+centred rows building in non-displayed memory and flipping on the boundary. Sample (fps=30, after 1s)
+— a transcript of an actual run, so row 14 still carries the pre-W9 full RFC3339 timestamp:
 
 ```
 screen (displayed):

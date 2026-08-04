@@ -42,7 +42,8 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   lines and scrolls them instead. `generate.RollUpOption` is deliberately separate from
   `UnitOption` — `WithFlipAtCueStart` is a pop-on concept and must not be passable here.
   Roll-up is the tightest of the three modes per line (a mode entry per cue plus a `CR` per
-  line): the default two lines are 24 pairs, exactly the 25 fps budget.
+  line): the default two lines are 19 pairs, and 20 once a per-unit builder prepends its
+  window reset, against the 24 a 25 fps second allows.
 
 - `generate.GeneratorOption`, with `generate.WithPaintOn` and `generate.WithRollUp`;
   `NewGenerator` now takes optional `GeneratorOption`s. Existing two-argument calls are
@@ -60,6 +61,19 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   does not match `-mode` is an error rather than a silently ignored flag.
 
 ### Changed
+
+- **The default UTC caption line is time-of-day (`15:04:05Z`) rather than a full RFC3339
+  timestamp.** A line's width is a claim on the one-pair-per-frame 608 budget, and the date cost
+  5 of the 24 pairs a 25 fps second allows: the default two lines were 23 pairs as a pop-on
+  build, 23 in paint-on and 24 in roll-up — 25 once a per-unit builder prepends its window
+  reset. Five of the `go608-clock` mode/policy combinations therefore did not fit their slice:
+  roll-up under the default per-unit reset at 25 and 23.976 fps, and at 23.976 fps even plain
+  pop-on. Time-of-day brings those to 18/18/19/20, which fits every supported rate with 3 pairs
+  spare at the tightest, and leaves room for a coloured row 14 (one extra pair for its mid-row
+  cell). `Z` is kept, so the line is still unambiguously UTC, and the date is fixed by `-start`
+  for any run worth watching. Callers who want the full timestamp pass their own
+  `CueContentFunc`; only the default `Config` changed. See
+  [W9](docs/design/cea608-wallclock-generation.md).
 
 - **`generate.NumCues` divides down instead of rounding**, so a cue is never *shorter* than
   `targetPeriodMS`: `max(1, unitDurMS/targetPeriodMS)` truncated. A 1920 ms segment now gets

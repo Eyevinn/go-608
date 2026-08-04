@@ -24,7 +24,7 @@ type Config struct {
 	Lines []LineSpec
 }
 
-// DefaultConfig is two centered lines: row 14 UTC RFC3339 (white) and row 15
+// DefaultConfig is two centered lines: row 14 UTC time-of-day (white) and row 15
 // media time (yellow) — the wall-clock caption of SPEC §7.
 func DefaultConfig() Config {
 	return Config{Lines: []LineSpec{
@@ -290,10 +290,18 @@ func splitEOC(toks []cta608.Token) (build, eoc []cta608.Token) {
 }
 
 // content renders one line's text for the given wall-clock second and media time.
+//
+// The UTC line is time-of-day rather than a full RFC3339 timestamp, and that is a
+// bandwidth decision: 608 drains one byte pair per frame, so a line's width is a
+// direct claim on the per-second budget. The date cost 5 pairs of the 24 a 25 fps
+// second has, which pushed the default two lines to 24 in roll-up — over budget
+// once a per-unit builder prepends its window reset. Time-of-day is also what the
+// caption is *for*: the second is what you read against media time, and the date
+// is fixed by -start for the length of any run worth watching.
 func content(kind string, wallSec, mediaMS int64) string {
 	switch kind {
 	case "utc":
-		return time.Unix(wallSec, 0).UTC().Format("2006-01-02T15:04:05Z")
+		return time.Unix(wallSec, 0).UTC().Format("15:04:05Z")
 	case "media":
 		s := mediaMS / 1000
 		return fmt.Sprintf("MEDIA %02d:%02d:%02d", s/3600, (s/60)%60, s%60)
