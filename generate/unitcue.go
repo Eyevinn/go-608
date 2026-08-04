@@ -24,8 +24,8 @@ import (
 // caption text refers to its own display interval, since with the default placement
 // the caption appears well after the time it shows.
 //
-// Within a unit the caption updates roughly every targetPeriodMS (≈1 s), snapped
-// to an even division of the unit so cues never straddle a unit boundary:
+// Within a unit the caption updates every targetPeriodMS (≈1 s) or a little slower,
+// snapped to an even division of the unit so cues never straddle a unit boundary:
 // N = NumCues(unitDurMS, targetPeriodMS) equal slices. By default each cue's pop-on
 // build drains from its slice's first frame and flips (EOC) once the build completes,
 // so the cue arms over its first ~build frames and then displays for the rest of
@@ -70,15 +70,32 @@ type UnitCue struct {
 // (u, cueIdx, cueStartMS) keeps a unit's output independent of any other unit.
 type CueContentFunc func(u Unit, cueIdx int, cueStartMS int64) UnitCue
 
-// NumCues returns how many ≈targetPeriodMS cues evenly divide a unit of
-// unitDurMS: max(1, round(unitDurMS/targetPeriodMS)). targetPeriodMS<=0 defaults
-// to 1000. E.g. (1920,1000)->2 (0.96 s each), (2002,1000)->2 (1.001 s each),
-// (1000,1000)->1, (4000,1000)->4.
+// NumCues returns how many cues of at least targetPeriodMS evenly divide a unit of
+// unitDurMS: max(1, unitDurMS/targetPeriodMS) truncated. targetPeriodMS<=0 defaults
+// to 1000. E.g. (2002,1000)->2 (1.001 s each), (1001,1000)->1, (1920,1000)->1
+// (1.92 s), (1000,1000)->1, (4000,1000)->4.
+//
+// The division truncates rather than rounds, so a cue is never *shorter* than the
+// target period. That asymmetry is deliberate. Content whose resolution is the period
+// — a clock labelled in whole seconds, the case go-608 ships — cannot distinguish two
+// cues that start inside the same period: they render identically, so the second cue
+// has nothing to flip and the caption ends up displayed up to a full period after the
+// instant it names. Truncating spends cue rate to avoid that: a 1920 ms segment gets
+// one 1.92 s cue that is right when it appears, rather than two 0.96 s cues that are
+// most of a second late. Rounding up would also mean a unit whose duration is a whole
+// number of periods plus a rounding-up fraction (1500, 2600) silently captions at a
+// sub-second rate, which is never what the caller asked for.
+//
+// A unit shorter than one period still yields one cue — the only case where the trade
+// cannot be made, since a cue may not straddle a unit boundary. Its caption then names
+// the second its slice starts in, so consecutive short units can repeat a label (only
+// the first of them flips) and the clock ticks up to one unit late. Broadcast-rate
+// units (a 30-frame group at 60000/1001 is 501 ms) stay within half a second of true.
 func NumCues(unitDurMS, targetPeriodMS int64) int {
 	if targetPeriodMS <= 0 {
 		targetPeriodMS = 1000
 	}
-	n := int(math.Round(float64(unitDurMS) / float64(targetPeriodMS)))
+	n := int(unitDurMS / targetPeriodMS)
 	if n < 1 {
 		n = 1
 	}

@@ -59,6 +59,19 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   only there (`WithFlipAtCueStart` for pop-on, `WithRollUpCarry` for roll-up); a policy that
   does not match `-mode` is an error rather than a silently ignored flag.
 
+### Changed
+
+- **`generate.NumCues` divides down instead of rounding**, so a cue is never *shorter* than
+  `targetPeriodMS`: `max(1, unitDurMS/targetPeriodMS)` truncated. A 1920 ms segment now gets
+  one 1.92 s cue instead of two of 0.96 s, and a 1500 ms unit one instead of two of 0.75 s;
+  1001 ms and 2002 ms units (30- and 60-frame groups at 30000/1001) are unchanged at one and
+  two 1.001 s cues. Two cues starting inside the same second render an identical
+  whole-second clock, so the second one had nothing to flip and the caption ended up
+  displayed up to a period after the instant it named: with 1.92 s units, `-fps 25
+  -seconds 28.8` decoded to 27 captions for 30 slices — one second never shown, another held
+  for 1.92 s, and the rest ticking every 0.96 s. Units shorter than one period still get one
+  cue, the one case the trade cannot be made.
+
 ## [0.8.0] - 2026-07-30
 
 ### Added
