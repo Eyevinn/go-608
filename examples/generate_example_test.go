@@ -39,9 +39,9 @@ func Example_generate() {
 		}
 	}
 	// Output:
-	// flip @frame 29: 2026-01-02T15:04:06Z | MEDIA 00:00:01
-	// flip @frame 59: 2026-01-02T15:04:07Z | MEDIA 00:00:02
-	// flip @frame 89: 2026-01-02T15:04:08Z | MEDIA 00:00:03
+	// flip @frame 29: 15:04:06Z | MEDIA 00:00:01
+	// flip @frame 59: 15:04:07Z | MEDIA 00:00:02
+	// flip @frame 89: 15:04:08Z | MEDIA 00:00:03
 }
 
 // Example_generatePaintOn drives the same generator in paint-on mode

@@ -134,7 +134,7 @@ func TestSyntheticWallClock(t *testing.T) {
 					t.Errorf("flip %d at frame %d, want %d (fps %g)", k, fl.frame, wantFrame, fps)
 				}
 				// One second per second: the UTC line shows consecutive seconds.
-				wantUTC := time.Unix(base+int64(k)+1, 0).UTC().Format("2006-01-02T15:04:05Z")
+				wantUTC := time.Unix(base+int64(k)+1, 0).UTC().Format("15:04:05Z")
 				if fl.utc != wantUTC {
 					t.Errorf("flip %d UTC = %q, want %q", k, fl.utc, wantUTC)
 				}
@@ -171,7 +171,7 @@ func TestSyntheticPaintOn(t *testing.T) {
 	// Each second opens with a cleared screen and closes with the complete caption
 	// for that same second (paint-on shows the second it is painted in).
 	for sec := 0; sec < 3; sec++ {
-		wantUTC := time.Unix(start.Unix()+int64(sec), 0).UTC().Format("2006-01-02T15:04:05Z")
+		wantUTC := time.Unix(start.Unix()+int64(sec), 0).UTC().Format("15:04:05Z")
 		var cleared bool
 		var last flip
 		for _, fl := range flips {
@@ -222,7 +222,7 @@ func TestSyntheticRollUp(t *testing.T) {
 			last = fl
 		}
 	}
-	wantUTC := time.Unix(start.Unix()+1, 0).UTC().Format("2006-01-02T15:04:05Z")
+	wantUTC := time.Unix(start.Unix()+1, 0).UTC().Format("15:04:05Z")
 	if last.rows[14] != wantUTC {
 		t.Errorf("row 14 = %q at the end of second 1, want %q", last.rows[14], wantUTC)
 	}
@@ -268,9 +268,9 @@ func TestUnitModeCueStartFlipsOnBoundaries(t *testing.T) {
 		frame int
 		utc   string
 	}{
-		{30, "2026-07-20T12:00:01Z"},
-		{60, "2026-07-20T12:00:02Z"}, // built in unit 0's tail, flipped by unit 1
-		{90, "2026-07-20T12:00:03Z"},
+		{30, "12:00:01Z"},
+		{60, "12:00:02Z"}, // built in unit 0's tail, flipped by unit 1
+		{90, "12:00:03Z"},
 	}
 	if len(flips) != len(want) {
 		for _, fl := range flips {
@@ -343,7 +343,7 @@ func TestUnitModePaintOn(t *testing.T) {
 				last = fl
 			}
 		}
-		want := time.Unix(start.Unix()+int64(sec), 0).UTC().Format("2006-01-02T15:04:05Z")
+		want := time.Unix(start.Unix()+int64(sec), 0).UTC().Format("15:04:05Z")
 		if last.utc != want {
 			t.Errorf("second %d ends showing %q, want %q", sec, last.utc, want)
 		}
@@ -437,7 +437,7 @@ func TestInputSplice(t *testing.T) {
 		t.Fatalf("got %d flips from spliced input, want at least 2", len(flips))
 	}
 	start, _ := time.Parse(time.RFC3339, startStr)
-	wantUTC := time.Unix(start.Unix()+1, 0).UTC().Format("2006-01-02T15:04:05Z")
+	wantUTC := time.Unix(start.Unix()+1, 0).UTC().Format("15:04:05Z")
 	if flips[0].utc != wantUTC {
 		t.Errorf("first spliced flip UTC = %q, want %q", flips[0].utc, wantUTC)
 	}

@@ -430,7 +430,11 @@ is never retransmitted, so a receiver joining mid-stream starts with a partly fi
 window that completes after `rows-1` seconds — exactly what tuning into a live
 broadcast looks like. Roll-up costs two extra pairs per line (the mode entry once per
 second, plus each line's `CR`), which makes it the tightest budget of the three: the
-default two lines are **24 pairs, exactly the 25 fps budget**.
+default two lines are **19 pairs**, and **20** once a per-unit builder prepends its
+window reset, against the 24 a 25 fps second allows and the 23 of 23.976 fps. Those
+figures are why the default UTC line is time-of-day rather than a full RFC3339
+timestamp — the date cost 5 pairs and put this mode over budget at both rates. See
+[W9](docs/design/cea608-wallclock-generation.md) for the measurements.
 
 ## Per-unit cues (`BuildUnitCues`)
 

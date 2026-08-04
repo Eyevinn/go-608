@@ -513,8 +513,9 @@ Rationale + validated prototype (`.scratch/proto-wallclock/`): [#7](docs/design/
 
 - **Drive model:** pull-by-wall-time — `Generator.NextFrame(frameWallMS)`, one call per video frame.
   Robust to gaps/seeks/VFR; makes drop-frame a non-issue (the caller's wall time already accounts).
-- **Content:** two centered lines, configurable — row 14 UTC RFC3339 (white), row 15 media time
-  (yellow) by default. Per-second refresh in v1 (sub-second ticking deferred).
+- **Content:** two centered lines, configurable — row 14 UTC time-of-day (white), row 15 media time
+  (yellow) by default. Per-second refresh in v1 (sub-second ticking deferred). The UTC line drops the
+  date because a line's width is a claim on the one-pair-per-frame budget (W9).
 - **Mode & timing:** pop-on, **build-ahead** into non-displayed memory, a single `EOC` on the **last
   frame** of the second flips it on — frame-accurate, zero lag.
 - **Cadence:** one field-1 pair/frame, `cc_count` padding per §5.3; field 2 unused by default (CC1

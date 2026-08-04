@@ -83,9 +83,9 @@ func TestGeneratorRoundTrip(t *testing.T) {
 	}
 
 	want := []flip{
-		{29, "2026-07-20T14:23:45Z", "MEDIA 00:00:01"},
-		{59, "2026-07-20T14:23:46Z", "MEDIA 00:00:02"},
-		{89, "2026-07-20T14:23:47Z", "MEDIA 00:00:03"},
+		{29, "14:23:45Z", "MEDIA 00:00:01"},
+		{59, "14:23:46Z", "MEDIA 00:00:02"},
+		{89, "14:23:47Z", "MEDIA 00:00:03"},
 	}
 	if len(flips) != len(want) {
 		t.Fatalf("got %d flips %+v, want %d", len(flips), flips, len(want))
@@ -98,8 +98,9 @@ func TestGeneratorRoundTrip(t *testing.T) {
 
 	// Centering + color of the final displayed screen (criterion 2).
 	s := dec.Screen()
-	if _, col, color, ok := rowText(s, 14); !ok || col != 6 || color != cta608.White {
-		t.Errorf("row14 col=%d color=%s (want col 6 white)", col, color)
+	// "15:04:05Z" is 9 columns wide, so centering it in 32 lands it at column 11.
+	if _, col, color, ok := rowText(s, 14); !ok || col != 11 || color != cta608.White {
+		t.Errorf("row14 col=%d color=%s (want col 11 white)", col, color)
 	}
 	if _, col, color, ok := rowText(s, 15); !ok || col != 9 || color != cta608.Yellow {
 		t.Errorf("row15 col=%d color=%s (want col 9 yellow)", col, color)
@@ -117,7 +118,7 @@ func TestWallClockContent(t *testing.T) {
 	if len(cue.Lines) != 2 {
 		t.Fatalf("got %d lines, want 2", len(cue.Lines))
 	}
-	if got, want := cue.Lines[0].Runs[0].Text, "2026-07-20T14:23:46Z"; got != want {
+	if got, want := cue.Lines[0].Runs[0].Text, "14:23:46Z"; got != want {
 		t.Errorf("UTC line = %q, want %q", got, want)
 	}
 	if got, want := cue.Lines[1].Runs[0].Text, "MEDIA 00:00:02"; got != want {
@@ -218,9 +219,9 @@ func TestGeneratorPaintOn(t *testing.T) {
 	}
 
 	want := []string{
-		"2026-07-20T14:23:44ZMEDIA 00:00:00",
-		"2026-07-20T14:23:45ZMEDIA 00:00:01",
-		"2026-07-20T14:23:46ZMEDIA 00:00:02",
+		"14:23:44ZMEDIA 00:00:00",
+		"14:23:45ZMEDIA 00:00:01",
+		"14:23:46ZMEDIA 00:00:02",
 	}
 	for sec, w := range want {
 		start := sec * 30
@@ -288,9 +289,9 @@ func TestGeneratorRollUp(t *testing.T) {
 		frame int
 		want  []string
 	}{
-		{29, []string{"", "2026-07-20T14:23:44Z", "MEDIA 00:00:00"}},
-		{59, []string{"MEDIA 00:00:00", "2026-07-20T14:23:45Z", "MEDIA 00:00:01"}},
-		{89, []string{"MEDIA 00:00:01", "2026-07-20T14:23:46Z", "MEDIA 00:00:02"}},
+		{29, []string{"", "14:23:44Z", "MEDIA 00:00:00"}},
+		{59, []string{"MEDIA 00:00:00", "14:23:45Z", "MEDIA 00:00:01"}},
+		{89, []string{"MEDIA 00:00:01", "14:23:46Z", "MEDIA 00:00:02"}},
 	}
 	for _, c := range cases {
 		got := trace[c.frame]
