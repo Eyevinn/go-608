@@ -26,7 +26,7 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   written inside its second/slice is reported the same way as a pop-on overrun.
 
 - Progressive **roll-up** generation, which types its lines out the same way but scrolls the
-  window instead of clearing it, so previous cues stay visible above the base row:
+  window instead of clearing it, so earlier cues age upward off the base row:
 
   ```go
   g := generate.NewGenerator(fps, cfg, generate.WithRollUp(3))                    // per-frame wall clock
@@ -44,6 +44,13 @@ on [pkg.go.dev](https://pkg.go.dev/github.com/Eyevinn/go-608) for detail.
   Roll-up is the tightest of the three modes per line (a mode entry per cue plus a `CR` per
   line): the default two lines are 19 pairs, and 20 once a per-unit builder prepends its
   window reset, against the 24 a 25 fps second allows.
+
+  Because every line is its own scroll step, a cue of `L` lines consumes `L` of the `rows`
+  rows: `rows == L` keeps **no** history, and a whole earlier cue needs `rows >= 2*L`. For
+  the default two lines, `WithRollUp(2)` — the zero value and `go608-clock -mode roll-up` —
+  shows only the current second, `WithRollUp(3)` keeps the previous second's bottom line and
+  `WithRollUp(4)` keeps it whole. A joining receiver's window fills after `ceil(rows/L)`
+  cues.
 
 - `generate.GeneratorOption`, with `generate.WithPaintOn` and `generate.WithRollUp`;
   `NewGenerator` now takes optional `GeneratorOption`s. Existing two-argument calls are

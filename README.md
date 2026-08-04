@@ -407,7 +407,19 @@ incomplete for part of each second.
 captioning uses, and it types its text out the same way paint-on does — the
 difference is the boundary between seconds. There is **no clear**: a second is a
 `CR` (which scrolls the 2-4 row window up and empties the base row) followed by the
-new line, so the previous seconds stay visible above and age upward off the window.
+new line, so earlier seconds age upward off the window.
+
+How much of an earlier second you actually keep is worth being precise about, because
+it is easy to expect more than a small window holds. **Every line is its own scroll
+step**, so a cue of `L` lines consumes `L` of the `rows` rows: `rows == L` keeps **no**
+history — each second scrolls the previous one clean off — and a whole earlier second
+needs `rows >= 2*L`. For the default two lines that is `WithRollUp(2)` showing only the
+current second (also what the zero value and `go608-clock -mode roll-up` select),
+`WithRollUp(3)` keeping the previous second's bottom line, and `WithRollUp(4)` keeping
+the previous second complete. A window in mid-scroll shows rows from two seconds either
+way: the first line's `CR` scrolls before the last line lands, so the top rows hold the
+tail of the previous second for the duration of the remaining writes — about 0.27 s at
+30 fps for the default.
 
 ```go
 g := generate.NewGenerator(30.0, generate.DefaultConfig(), generate.WithRollUp(3))
@@ -416,19 +428,24 @@ g := generate.NewGenerator(30.0, generate.DefaultConfig(), generate.WithRollUp(3
 ```text
 frame 30  94 26  RU3        window size (restated each second)
 frame 31  94 ad  CR         scroll: row 14 → 13, row 15 → 14, base row cleared
-frame 34  32 b0  "20"       ─┐ the new UTC line types onto row 15…
-frame 43  b5 da  "…45Z"     ─┘
-frame 44  94 ad  CR         scroll again: the UTC line moves to 14
-frame 47  cd 45  "ME"       ─┐ the media line types onto row 15
-frame 53  b0 31  "…01"      ─┘ settled: 13=MEDIA 00:00:00 14=…45Z 15=MEDIA 00:00:01
+frame 32  94 f4  PAC        base row, indent 8 (white)
+frame 33  97 23  TO         Tab Offset 3 → column 11, centring "14:23:45Z"
+frame 34  31 34  "14"       ─┐ the new UTC line types onto row 15…
+frame 38  da 80  "Z"        ─┘ 5 pairs for 9 characters
+frame 39  94 ad  CR         scroll again: the UTC line moves to 14
+frame 40  94 f4  PAC        base row, indent 8
+frame 41  91 2a  MidRow     yellow — its cell is the odd column centring needs
+frame 42  cd 45  "ME"       ─┐ the media line types onto row 15
+frame 48  b0 31  "01"       ─┘ settled: 13=MEDIA 00:00:00 14=14:23:45Z 15=MEDIA 00:00:01
 ```
 
 Each configured line is its own scroll step, written in **`Row` order** so the window
 ends up laid out as the rows declare (the same picture pop-on and paint-on give); the
 largest `Row` is the base row. The history in the rows above is the **decoder's** and
 is never retransmitted, so a receiver joining mid-stream starts with a partly filled
-window that completes after `rows-1` seconds — exactly what tuning into a live
-broadcast looks like. Roll-up costs two extra pairs per line (the mode entry once per
+window that completes after `ceil(rows/L)` seconds for an `L`-line caption — for the
+default two lines, one second in a 2-row window and two in a 3- or 4-row one, exactly
+what tuning into a live broadcast looks like. Roll-up costs two extra pairs per line (the mode entry once per
 second, plus each line's `CR`), which makes it the tightest budget of the three: the
 default two lines are **19 pairs**, and **20** once a per-unit builder prepends its
 window reset, against the 24 a 25 fps second allows and the 23 of 23.976 fps. Those
@@ -609,14 +626,15 @@ defines only the *new* line and leaves the rest of the window to the decoder:
   starts empty and refills from the unit's own cues. The unit is then self-contained in
   *display* as well as in data: a receiver that joins, seeks, or starts here sees exactly
   what a continuously-running one sees, and go-608 can promise that from the unit alone.
-  The cost is visible — the window truncates and refills at every unit boundary, and with
-  ~1 s cues it never holds more than `unitDurMS/targetPeriodMS` lines, so **a 2 s segment
-  cannot fill a 4-row window at all**.
+  The cost is visible — the window truncates and refills at every unit boundary, so the
+  deepest it ever gets is the `L*N` rows a unit writes for itself, `L` lines per cue over
+  its `N = NumCues` cues. Two one-second cues of two lines fill a 4-row window exactly;
+  **a single-line caption in the same 2 s unit reaches only 2 of those 4 rows**.
 - **`WithRollUpCarry()`.** The window scrolls smoothly across boundaries and fills to its
   full depth, as broadcast roll-up does. The cost is that the display depends on units
-  arriving in order: a joining receiver sees a thin window that completes after `rows-1`
-  cues, and a seek shows the pre-seek lines aging out over the same span. Both
-  self-correct.
+  arriving in order: a joining receiver sees a thin window that completes after
+  `ceil(rows/L)` cues, and a seek shows the pre-seek lines aging out over the same span.
+  Both self-correct.
 
 Reset is the default because it is the only option whose output is a function of the unit
 alone — the property the per-unit API exists to provide. Either way the emitted **data**

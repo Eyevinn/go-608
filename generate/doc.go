@@ -21,8 +21,10 @@
 //   - paint-on (WithPaintOn, BuildUnitPaintCues): the second or cue opens with a
 //     clear and the caption stands complete until the next clear.
 //   - roll-up (WithRollUp, BuildUnitRollUpCues): the window scrolls up instead of
-//     clearing and each line is typed onto the bottom row, so previous seconds
-//     stay visible above — what live captioning looks like.
+//     clearing and each line is typed onto the bottom row, so earlier seconds age
+//     upward off it — what live captioning looks like. Each line is a scroll step,
+//     so how much of an earlier second survives depends on the window size against
+//     the line count; see WithRollUp.
 //
 // See SPEC.md section 4.4 / 7 and docs/design/cea608-wallclock-generation.md.
 package generate

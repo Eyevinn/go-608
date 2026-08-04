@@ -47,15 +47,16 @@ type rollUpConfig struct {
 //     starts here sees exactly what a receiver that has been running sees, and
 //     go-608 can promise that from the unit alone. The cost is visible: a viewer
 //     watching continuously sees the window truncate and refill at every unit
-//     boundary, so with cues of ~1 s the window never holds more than
-//     unitDurMS/targetPeriodMS lines — a 2 s segment cannot fill a 4-row window at
-//     all.
+//     boundary, so the deepest the window ever gets is the L*N rows a unit writes
+//     for itself — L lines per cue over its N = NumCues cues. Two one-second cues of
+//     two lines fill a 4-row window exactly; a single-line caption in the same unit
+//     reaches only 2 of those 4 rows.
 //   - WithRollUpCarry: the window scrolls smoothly across boundaries and the mode
 //     behaves as broadcast roll-up does, filling to its full depth. The cost is that
 //     the display depends on units played in order: a receiver joining mid-stream
-//     sees a partly filled window that completes after rows-1 cues, and one that
-//     seeks sees the pre-seek lines age out over the same span. Both self-correct,
-//     and neither is wrong so much as briefly thin.
+//     sees a partly filled window that completes after ceil(rows/L) cues, and one
+//     that seeks sees the pre-seek lines age out over the same span. Both
+//     self-correct, and neither is wrong so much as briefly thin.
 //
 // Reset is the default because it is the only option whose output is a function of
 // the unit alone, which is what the per-unit API exists to provide. Choose carry when
@@ -81,7 +82,10 @@ func WithRollUpCarry() RollUpOption {
 // A cue's lines are written in Row order, bottom line last, so the window ends up laid
 // out as the Rows declare and the largest Row is the base row: lines on rows 14 and 15
 // leave the first on 14 and the second on 15, the same picture the pop-on and paint-on
-// builders produce for the same content. A cue with no lines emits nothing at all,
+// builders produce for the same content. Because every line is its own scroll step, a
+// cue of L lines consumes L of the rows rows: rows == L keeps no history at all, and
+// holding a whole earlier cue takes rows >= 2*L — see WithRollUp, which describes the
+// same arithmetic for the continuous generator. A cue with no lines emits nothing at all,
 // leaving the window as it stands (there is no clear to emit — an empty roll-up cue is
 // silence, not an erase).
 //

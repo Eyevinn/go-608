@@ -161,9 +161,12 @@ type options struct {
 // "pop-on" builds each second off-screen and flips it on whole; "paint-on" clears at
 // the second boundary and writes the caption onto the screen as it goes, so the text
 // visibly types itself out; "roll-up[2-4]" scrolls the window up each second and types
-// the new lines onto the bottom row, keeping the previous seconds visible above (the
-// mode live captioning uses). Plain "roll-up" is a two-row window, which is what the
-// default two-line caption fills.
+// the new lines onto the bottom row (the mode live captioning uses).
+//
+// Each line is its own scroll step, so the default two-line caption fills a two-row
+// window exactly: plain "roll-up" therefore shows only the current second, "roll-up3"
+// keeps the previous second's bottom line, and "roll-up4" keeps the previous second
+// whole. See generate.WithRollUp.
 func (o *options) captionMode() (mode string, rows int, err error) {
 	switch o.mode {
 	case "", modePopOn:
@@ -241,7 +244,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.start, "start", "", "wall-clock start time (RFC3339); default: now (UTC)")
 	fs.StringVar(&opts.mode, "mode", "pop-on",
 		"caption mode: \"pop-on\" (flip each second on whole), \"paint-on\" (type it out onto a cleared "+
-			"screen) or \"roll-up[2-4]\" (scroll the window up and type onto the bottom row)")
+			"screen) or \"roll-up[2-4]\" (scroll the window up and type onto the bottom row; the default "+
+			"two lines fill 2 rows, so use roll-up4 to keep the previous second visible)")
 	fs.StringVar(&opts.unitMode, "unit-mode", unitOff,
 		"generate one unit (DASH segment / MoQ group) at a time instead of frame by frame: "+
 			"\"default\", \"cue-start\" (pop-on flips on the cue boundary) or \"carry\" (roll-up keeps its window)")

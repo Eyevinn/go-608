@@ -38,9 +38,11 @@ func rollTrace(t *testing.T, frames []schedule.Frame, base, rows int) [][]string
 }
 
 // TestBuildUnitRollUpCuesScrollsAndTypes is the defining behavior: each cue scrolls
-// the window up and types its lines onto the base row, two characters per frame,
-// while the previous lines stay visible above. A 2 s segment at 30 fps with the
-// two-line probe content gives two cues of two scroll steps each.
+// the window up and types its lines onto the base row, two characters per frame. A 2 s
+// segment at 30 fps with the two-line probe content gives two cues of two scroll steps
+// each. rows is 3 against those 2 lines, which is what leaves anything of the previous
+// cue visible above — its bottom line survives, and a 4-row window would keep it whole
+// (see WithRollUp).
 func TestBuildUnitRollUpCuesScrollsAndTypes(t *testing.T) {
 	const fps = 30.0
 	const unitFrames = 60

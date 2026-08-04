@@ -92,16 +92,32 @@ func WithPaintOn() GeneratorOption {
 
 // WithRollUp switches the generator to roll-up in a window of rows rows (clamped
 // to 2..4) — the mode live captioning actually uses. Each second scrolls the
-// window up and types its new line onto the bottom (base) row, so the previous
-// seconds stay visible above it and age upward off the window.
+// window up and types its new lines onto the bottom (base) row, so earlier seconds
+// age upward off the window.
+//
+// How much of an earlier second survives is a function of rows against the number
+// of configured lines, and it is easy to expect more history than a small window
+// can hold: every line is its own scroll step, so a cue of L lines consumes L of
+// the rows rows. rows == L therefore keeps *no* history — each second scrolls the
+// previous one entirely off — and it takes rows >= 2*L to hold a whole earlier
+// second. For DefaultConfig's two lines that means rows 2 shows only the current
+// second, rows 3 keeps the previous second's bottom line, and rows 4 keeps the
+// previous second complete. WithRollUp(2) with two lines is the no-history case,
+// and it is what the zero value and go608-clock's plain -mode roll-up select.
+//
+// A window in mid-scroll also necessarily shows rows from two different seconds:
+// the first line's CR scrolls the previous second up and writes over the base row,
+// so until the last line lands the top rows still hold the tail of the second
+// before. With the default two lines that pairing is visible for the second line's
+// write — about 0.27 s at 30 fps.
 //
 // Like paint-on, roll-up writes to the displayed screen, so the caption types
 // itself out two characters per frame. What differs is the boundary between
 // seconds: there is no clear. A second is CR (the scroll) followed by the new
 // line, and the history in the rows above is the decoder's, never retransmitted.
 // A receiver joining mid-stream therefore starts with a partly filled window that
-// completes after rows-1 seconds — which is exactly what tuning into a live
-// broadcast looks like.
+// completes after ceil(rows/L) seconds for an L-line caption — which is exactly what
+// tuning into a live broadcast looks like.
 //
 // Each configured line becomes its own scroll step, written in Row order so the
 // window ends up laid out as the rows declare: DefaultConfig's rows 14 and 15
@@ -110,8 +126,8 @@ func WithPaintOn() GeneratorOption {
 //
 // Roll-up costs two extra pairs per line over paint-on (the mode entry, once per
 // second, and each line's CR), which matters at low frame rates: the default two
-// lines are 24 pairs, exactly the 25 fps budget, so any more content needs a
-// higher rate. Overran reports the overflow as always.
+// lines are 19 pairs against the 24 a 25 fps second allows, so there is room for
+// more content but not much. Overran reports the overflow as always.
 func WithRollUp(rows int) GeneratorOption {
 	return func(g *Generator) { g.mode = cta608.RollUp; g.rollUpRows = clampRows(rows) }
 }
