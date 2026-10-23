@@ -993,6 +993,10 @@ The build stamps version and commit date into `internal` via `-ldflags`;
 
 [MIT](LICENSE) © 2026 Eyevinn Technology AB.
 
+The gopher in the logo is adapted from the Go gopher, created by
+[Renée French](https://reneefrench.blogspot.com/) and licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## ChangeLog and Versions
 
 See [CHANGELOG.md](CHANGELOG.md).
